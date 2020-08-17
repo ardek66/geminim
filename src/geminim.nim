@@ -11,6 +11,7 @@ const
 let ctx = newContext(certFile="mycert.pem", keyFile="mykey.pem")
 var m = newMimeTypes()
 m.register(ext = "gemini", mimetype = "text/gemini")
+m.register(ext = "gmi", mimetype = "text/gemini")
 
 template linkFromPath(path: string): string =
   "=> gemini://" & hostname / path
@@ -25,13 +26,15 @@ proc serveFile(response: var Response, path: string) =
 
 proc serveDir(response: var Response, path: string) =
   let relPath = path.relativePath(dir)
+  
   response.body.add "### Index of " & relPath & "\r\n"
   if relPath.parentDir != "":
     response.body.add linkFromPath(relPath.parentDir) & " [..]" & "\r\n"
   
   for kind, file in path.walkDir:
     let uriPath = relativePath(file, dir, '/')
-    if uriPath.toLowerAscii == "index.gemini":
+    if uriPath.toLowerAscii == "index.gemini" or
+       uriPath.toLowerAscii == "index.gmi":
       response.serveFile(file)
       return
     
