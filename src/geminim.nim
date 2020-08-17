@@ -1,20 +1,20 @@
-import net, asyncnet, asyncdispatch, uri, os, mimetypes, strutils
+import net, asyncnet, asyncdispatch,
+       uri, os, mimetypes, strutils
+
+import config
 
 type Response = object
   code: int
   meta, body: string
 
-const
-  hostname = "localhost"
-  dir = "pub"
+var settings: Settings
 
-let ctx = newContext(certFile="mycert.pem", keyFile="mykey.pem")
 var m = newMimeTypes()
 m.register(ext = "gemini", mimetype = "text/gemini")
 m.register(ext = "gmi", mimetype = "text/gemini")
 
 template linkFromPath(path: string): string =
-  "=> gemini://" & hostname / path
+  "=> gemini://" & settings.hostname / path
 
 proc serveFile(response: var Response, path: string) =
   response.body = readFile(path)
@@ -25,14 +25,14 @@ proc serveFile(response: var Response, path: string) =
     response.meta = "text/gemini"
 
 proc serveDir(response: var Response, path: string) =
-  let relPath = path.relativePath(dir)
+  let relPath = path.relativePath(settings.dir)
   
   response.body.add "### Index of " & relPath & "\r\n"
   if relPath.parentDir != "":
     response.body.add linkFromPath(relPath.parentDir) & " [..]" & "\r\n"
   
   for kind, file in path.walkDir:
-    let uriPath = relativePath(file, dir, '/')
+    let uriPath = relativePath(file, settings.dir, '/')
     if uriPath.toLowerAscii == "index.gemini" or
        uriPath.toLowerAscii == "index.gmi":
       response.serveFile(file)
@@ -50,12 +50,12 @@ proc serveDir(response: var Response, path: string) =
 
 proc parseRequest(client: AsyncSocket, line: string) {.async.} =
   let res = parseUri(line)
-  var path = dir & res.path
-  if path.relativePath(dir).parentDir == "": path = dir
+  var path = settings.dir & res.path
+  if path.relativePath(settings.dir).parentDir == "": path = settings.dir
 
   var response: Response
 
-  if res.hostname != hostname:
+  if res.hostname != settings.hostname:
     response.code = 53
     response.meta = "PROXY NOT ALLOWED"
   else:
@@ -87,10 +87,11 @@ proc handle(client: AsyncSocket) {.async.} =
   client.close()
 
 proc serve() {.async.} =
+  let ctx = newContext(certFile = settings.certFile, keyFile = settings.keyFile)
   var server = newAsyncSocket()
   server.setSockOpt(OptReuseAddr, true)
   server.setSockOpt(OptReusePort, true)
-  server.bindAddr(Port(1965))
+  server.bindAddr(Port(settings.port))
   server.listen()
   ctx.wrapSocket(server)
   while true:
@@ -98,4 +99,11 @@ proc serve() {.async.} =
     ctx.wrapConnectedSocket(client, handshakeAsServer)
     asyncCheck client.handle()
 
-waitFor serve()
+if paramCount() != 1:
+  echo "USAGE:"
+  echo "./geminim <path/to/config.ini>"
+elif fileExists(paramStr(1)):
+  settings = readSettings(paramStr(1))
+  waitFor serve()
+else:
+  echo paramStr(1) & ": file not found"
