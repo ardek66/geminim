@@ -4,7 +4,6 @@ import net, asyncnet, asyncdispatch,
 import config
 
 type Response = object
-  hostname, dir: string
   code: int
   meta, body: string
 
@@ -25,21 +24,21 @@ proc serveFile(response: var Response, path: string) =
     response.body = "##<Empty File>"
     response.meta = "text/gemini"
 
-proc serveDir(response: var Response, path: string) =
-  let relPath = path.relativePath(response.dir)
+proc serveDir(response: var Response, path, hostname, rootDir: string) =
+  let relPath = path.relativePath(rootDir)
   
   response.body.add "### Index of " & relPath & "\r\n"
   if relPath.parentDir != "":
-    response.body.add link(response.hostname, relPath.parentDir) & " [..]" & "\r\n"
+    response.body.add link(hostname, relPath.parentDir) & " [..]" & "\r\n"
   
   for kind, file in path.walkDir:
-    let uriPath = relativePath(file, response.dir, '/')
+    let uriPath = relativePath(file, rootDir, '/')
     if uriPath.toLowerAscii == "index.gemini" or
        uriPath.toLowerAscii == "index.gmi":
       response.serveFile(file)
       return
     
-    response.body.add link(response.hostname, uriPath) & ' ' & uriPath.extractFilename
+    response.body.add link(hostname, uriPath) & ' ' & uriPath.extractFilename
     case kind:
     of pcFile: response.body.add " [FILE]"
     of pcDir: response.body.add " [DIR]"
@@ -53,19 +52,20 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
   let res = parseUri(line)
   
   if settings.vhost.hasKey(res.hostname):
-    var response: Response
-    response.hostname = res.hostname
-    response.dir = settings.vhost[response.hostname]
+    let
+      hostname = res.hostname
+      rootDir = settings.vhost[hostname]
     
-    var path = response.dir & res.path
-    if path.relativePath(response.dir).parentDir == "":
-      path = response.dir
+    var path = rootDir & res.path
+    if path.relativePath(rootDir).parentDir == "":
+      path = rootDir
 
+    var response: Response
     response.code = 20
     if fileExists(path):
       response.serveFile(path)
     elif dirExists(path):
-      response.serveDir(path)
+      response.serveDir(path, hostname, rootDir)
     else:
       response.code = 51
       response.meta = "'" & path & "' NOT FOUND"
