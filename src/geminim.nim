@@ -1,5 +1,5 @@
 import net, asyncnet, asyncdispatch,
-       uri, os, mimetypes, strutils
+       uri, os, mimetypes, strutils, strtabs
 
 import config
 
@@ -9,12 +9,16 @@ type Response = object
 
 var settings: Settings
 
+var
+  hostname: string
+  dir: string
+
 var m = newMimeTypes()
 m.register(ext = "gemini", mimetype = "text/gemini")
 m.register(ext = "gmi", mimetype = "text/gemini")
 
 template linkFromPath(path: string): string =
-  "=> gemini://" & settings.hostname / path
+  "=> gemini://" & hostname / path
 
 proc serveFile(response: var Response, path: string) =
   response.body = readFile(path)
@@ -25,14 +29,14 @@ proc serveFile(response: var Response, path: string) =
     response.meta = "text/gemini"
 
 proc serveDir(response: var Response, path: string) =
-  let relPath = path.relativePath(settings.dir)
+  let relPath = path.relativePath(dir)
   
   response.body.add "### Index of " & relPath & "\r\n"
   if relPath.parentDir != "":
     response.body.add linkFromPath(relPath.parentDir) & " [..]" & "\r\n"
   
   for kind, file in path.walkDir:
-    let uriPath = relativePath(file, settings.dir, '/')
+    let uriPath = relativePath(file, dir, '/')
     if uriPath.toLowerAscii == "index.gemini" or
        uriPath.toLowerAscii == "index.gmi":
       response.serveFile(file)
@@ -50,15 +54,14 @@ proc serveDir(response: var Response, path: string) =
 
 proc parseRequest(client: AsyncSocket, line: string) {.async.} =
   let res = parseUri(line)
-  var path = settings.dir & res.path
-  if path.relativePath(settings.dir).parentDir == "": path = settings.dir
+  
+  if settings.vhost.hasKey(res.hostname):
+    hostname = res.hostname
+    dir = settings.vhost[hostname]
+    var path = dir & res.path
+    if path.relativePath(dir).parentDir == "": path = dir
 
-  var response: Response
-
-  if res.hostname != settings.hostname:
-    response.code = 53
-    response.meta = "PROXY NOT ALLOWED"
-  else:
+    var response: Response
     response.code = 20
     if fileExists(path):
       response.serveFile(path)
@@ -75,6 +78,9 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
     except:
       let msg = getCurrentExceptionMsg()
       await client.send("40 TEMP ERROR " & msg & "\r\n")
+
+  else:
+    await client.send("53 PROXY NOT SUPPORTED\r\n")
 
 proc handle(client: AsyncSocket) {.async.} =
   let line = await client.recvLine()
