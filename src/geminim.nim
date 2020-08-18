@@ -57,7 +57,8 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
       rootDir = settings.vhost[hostname]
     
     var path = rootDir & res.path
-    if path.relativePath(rootDir).parentDir == "":
+    path.normalizePath
+    if path.startsWith "..":
       path = rootDir
 
     var response: Response
