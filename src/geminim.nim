@@ -4,20 +4,17 @@ import net, asyncnet, asyncdispatch,
 import config
 
 type Response = object
+  hostname, dir: string
   code: int
   meta, body: string
 
 var settings: Settings
 
-var
-  hostname: string
-  dir: string
-
 var m = newMimeTypes()
 m.register(ext = "gemini", mimetype = "text/gemini")
 m.register(ext = "gmi", mimetype = "text/gemini")
 
-template linkFromPath(path: string): string =
+template link(hostname, path: string): string =
   "=> gemini://" & hostname / path
 
 proc serveFile(response: var Response, path: string) =
@@ -29,20 +26,20 @@ proc serveFile(response: var Response, path: string) =
     response.meta = "text/gemini"
 
 proc serveDir(response: var Response, path: string) =
-  let relPath = path.relativePath(dir)
+  let relPath = path.relativePath(response.dir)
   
   response.body.add "### Index of " & relPath & "\r\n"
   if relPath.parentDir != "":
-    response.body.add linkFromPath(relPath.parentDir) & " [..]" & "\r\n"
+    response.body.add link(response.hostname, relPath.parentDir) & " [..]" & "\r\n"
   
   for kind, file in path.walkDir:
-    let uriPath = relativePath(file, dir, '/')
+    let uriPath = relativePath(file, response.dir, '/')
     if uriPath.toLowerAscii == "index.gemini" or
        uriPath.toLowerAscii == "index.gmi":
       response.serveFile(file)
       return
     
-    response.body.add linkFromPath(uriPath) & ' ' & uriPath.extractFilename
+    response.body.add link(response.hostname, uriPath) & ' ' & uriPath.extractFilename
     case kind:
     of pcFile: response.body.add " [FILE]"
     of pcDir: response.body.add " [DIR]"
@@ -56,12 +53,14 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
   let res = parseUri(line)
   
   if settings.vhost.hasKey(res.hostname):
-    hostname = res.hostname
-    dir = settings.vhost[hostname]
-    var path = dir & res.path
-    if path.relativePath(dir).parentDir == "": path = dir
-
     var response: Response
+    response.hostname = res.hostname
+    response.dir = settings.vhost[response.hostname]
+    
+    var path = response.dir & res.path
+    if path.relativePath(response.dir).parentDir == "":
+      path = response.dir
+
     response.code = 20
     if fileExists(path):
       response.serveFile(path)
