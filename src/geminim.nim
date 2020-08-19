@@ -35,10 +35,16 @@ proc serveDir(response: var Response, path, hostname, rootDir: string) =
     let uriPath = relativePath(file, rootDir, '/')
     if uriPath.toLowerAscii == "index.gemini" or
        uriPath.toLowerAscii == "index.gmi":
+    let
+      uriPath = relativePath(file, rootDir, '/')
+      uriFile = uriPath.extractFilename
+    
+    if uriFile.toLowerAscii == "index.gemini" or
+       uriFile.toLowerAscii == "index.gmi":
       response.serveFile(file)
       return
     
-    response.body.add link(hostname, uriPath) & ' ' & uriPath.extractFilename
+    response.body.add link(hostname, uriPath) & ' ' & uriFile
     case kind:
     of pcFile: response.body.add " [FILE]"
     of pcDir: response.body.add " [DIR]"
