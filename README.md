@@ -6,10 +6,10 @@ Geminim is a small server using the [gemini protocol](https://gemini.circumlunar
 * Lightweight
 * Simple .ini configuration
 * Name-based vhosting support
+* CGI
 
 ### Planned features:
 * Client TLS-certificate
-* INPUT support
 
 
 **Note:** This is my first serious attempt at coding a server. Help and criticism is always welcome :D
