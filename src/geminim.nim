@@ -20,13 +20,25 @@ m.register(ext = "gmi", mimetype = "text/gemini")
 template resp(): Response =
   response.mget()
 
-proc serveScript(response: FutureVar[Response], res: Uri, vhost: VHost) {.async.} =
-  template scriptFile(): string =
-    settings.cgi.dir / script
+proc relativePath(path, dir: string): string =
+  if dir == "/":
+    return path
+
+  result = path
+  result.removePrefix(dir)
+  if not result.startsWith('/'):
+    result = '/' & result
   
+proc isVirtDir(path, virtDir: string): bool =
+  virtDir.len > 0 and
+  path.extractFilename.len > 0 and
+  path.parentDir == virtDir
+
+proc serveScript(response: FutureVar[Response], res: Uri, vhost: VHost) {.async.} =
   let
     query = res.query
     script = res.path.extractFilename
+    scriptFile = settings.cgi.dir / script
 
   if not fileExists(scriptFile):
     resp.code = 53
@@ -97,17 +109,16 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
   if settings.vhosts.hasKey(res.hostname):
     let vhost = (hostname: res.hostname,
                  rootDir: settings.vhosts[res.hostname])
-    
-    var path = vhost.rootDir & res.path
-    path.normalizePath
-    if path.startsWith "..":
+
+    var path = vhost.rootDir / res.path
+    if not (path.parentDir == vhost.rootDir):
       path = vhost.rootDir
     
     var response = newFutureVar[Response]("parseRequest")
     resp.code = 20
     resp.meta = "text/gemini"
     
-    if res.path.isRelativeTo(settings.cgi.virtDir):
+    if res.path.isVirtDir(settings.cgi.virtDir):
       await response.serveScript(res, vhost)
     elif fileExists(path):
       await response.serveFile(path)
