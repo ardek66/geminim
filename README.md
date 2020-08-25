@@ -9,9 +9,9 @@ Currently hosting gemini://idf.looting.uk
 * Simple .ini configuration
 * Name-based vhosting support
 * CGI
+* Per-user directories
 
 ### Planned features:
-* Per-user directories
 * Client TLS-certificate
 
 

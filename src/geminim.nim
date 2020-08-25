@@ -34,6 +34,16 @@ proc isVirtDir(path, virtDir: string): bool =
   path.extractFilename.len > 0 and
   path.parentDir == virtDir
 
+
+proc getUserDir(path: string): (string, string) =
+  var i = 2
+  while i < path.len:
+    if path[i] in {DirSep, AltSep}: break
+    result[0].add path[i]
+    inc i
+  
+  result[1] = path[i..^1]
+
 proc serveScript(response: FutureVar[Response], res: Uri, vhost: VHost) {.async.} =
   let
     query = res.query
@@ -74,21 +84,19 @@ proc serveFile(response: FutureVar[Response], path: string) {.async.} =
   else:
     resp.body = "##<Empty File>"
 
-proc serveDir(response: FutureVar[Response], path: string, vhost: VHost) {.async.} =
+proc serveDir(response: FutureVar[Response], path, resPath: string) {.async.} =
   template link(path: string): string =
-    "=> gemini://" & vhost.hostname / path
+    "=> " / path
 
-  let relPath = path.relativePath(vhost.rootDir)
-  
-  resp.body.add "### Index of " & relPath & "\r\n"
-  if relPath.parentDir != "":
-    resp.body.add link(relPath.parentDir) & " [..]" & "\r\n"
+  resp.body.add "### Index of " & resPath & "\r\n"
+  if resPath.parentDir != "":
+    resp.body.add link(resPath.parentDir) & " [..]" & "\r\n"
   
   for kind, file in path.walkDir:
     let
-      uriPath = relativePath(file, vhost.rootDir, '/')
+      uriPath = relativePath(file, path.parentDir)
       uriFile = uriPath.extractFilename
-    
+
     if uriFile.toLowerAscii == "index.gemini" or
        uriFile.toLowerAscii == "index.gmi":
       await response.serveFile(file)
@@ -109,10 +117,19 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
   if settings.vhosts.hasKey(res.hostname):
     let vhost = (hostname: res.hostname,
                  rootDir: settings.vhosts[res.hostname])
-
-    var path = vhost.rootDir / res.path
-    if not (path.parentDir == vhost.rootDir):
-      path = vhost.rootDir
+    var
+      rootDir = vhost.rootDir
+      relPath = rootDir / res.path
+      filePath = relPath
+      
+    if res.path.startsWith("/~"):
+      let (user, newPath) = res.path.getUserDir
+      rootDir = vhost.hostname
+      relPath = rootDir / newPath
+      filePath = settings.homeDir / user / relPath
+      
+    if not (relPath.normalizedPath.startsWith(rootDir)):
+      filePath = vhost.rootDir
     
     var response = newFutureVar[Response]("parseRequest")
     resp.code = 20
@@ -120,13 +137,13 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
     
     if res.path.isVirtDir(settings.cgi.virtDir):
       await response.serveScript(res, vhost)
-    elif fileExists(path):
-      await response.serveFile(path)
-    elif dirExists(path):
-      await response.serveDir(path, vhost)
+    elif fileExists(filePath):
+      await response.serveFile(filePath)
+    elif dirExists(filePath):
+      await response.serveDir(filePath, res.path)
     else:
       resp.code = 51
-      resp.meta = "'" & path & "' NOT FOUND"
+      resp.meta = "'" & res.path & "' NOT FOUND"
     
     try:
       await client.send($resp.code & " " & resp.meta & "\r\n")

@@ -7,7 +7,12 @@ type Settings* = object
   vhosts*: StringTableRef
   port*: int
   certFile*, keyFile*: string
+  homeDir*: string
   cgi*: CgiConf
+
+const defaultHome =
+  when defined(posix): "/home/"
+  else: "C:\\Users\\"
 
 proc get(dict: Config, value, default: string, section = ""): string =
   result = dict.getSectionValue(section, value)
@@ -21,6 +26,7 @@ proc readSettings*(path: string): Settings =
     port: conf.get("port", "1965").parseInt,
     certFile: conf.get("certFile", "mycert.pem"),
     keyFile: conf.get("keyFile", "mykey.pem"),
+    homeDir: conf.get("homeDir", defaultHome),
     cgi: (dir: conf.get("dir", "cgi/", section = "CGI"),
           virtDir: conf.get("virtDir", "", section = "CGI")))
 
