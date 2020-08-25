@@ -84,17 +84,19 @@ proc serveFile(response: FutureVar[Response], path: string) {.async.} =
   else:
     resp.body = "##<Empty File>"
 
-proc serveDir(response: FutureVar[Response], path, resPath: string) {.async.} =
+proc serveDir(response: FutureVar[Response], path, rootDir: string) {.async.} =
   template link(path: string): string =
     "=> " / path
 
+  let resPath = path.relativePath(rootDir)
+  
   resp.body.add "### Index of " & resPath & "\r\n"
   if resPath.parentDir != "":
     resp.body.add link(resPath.parentDir) & " [..]" & "\r\n"
   
   for kind, file in path.walkDir:
     let
-      uriPath = relativePath(file, path.parentDir)
+      uriPath = file.relativePath(rootDir)
       uriFile = uriPath.extractFilename
 
     if uriFile.toLowerAscii == "index.gemini" or
@@ -140,7 +142,7 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
     elif fileExists(filePath):
       await response.serveFile(filePath)
     elif dirExists(filePath):
-      await response.serveDir(filePath, res.path)
+      await response.serveDir(filePath, rootDir)
     else:
       resp.code = 51
       resp.meta = "'" & res.path & "' NOT FOUND"
