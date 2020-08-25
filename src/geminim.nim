@@ -115,8 +115,13 @@ proc serveDir(response: FutureVar[Response], path, rootDir: string) {.async.} =
 
 proc parseRequest(client: AsyncSocket, line: string) {.async.} =
   let res = parseUri(line)
+  var response = newFutureVar[Response]("parseRequest")
   
-  if settings.vhosts.hasKey(res.hostname):
+  if settings.redirects.hasKey(res.hostname):
+    resp.code = 30
+    resp.meta = settings.redirects[res.hostname]
+    
+  elif settings.vhosts.hasKey(res.hostname):
     let vhost = (hostname: res.hostname,
                  rootDir: settings.vhosts[res.hostname])
     var
@@ -133,7 +138,6 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
     if not (relPath.normalizedPath.startsWith(rootDir)):
       filePath = vhost.rootDir
     
-    var response = newFutureVar[Response]("parseRequest")
     resp.code = 20
     resp.meta = "text/gemini"
     
@@ -146,17 +150,17 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
     else:
       resp.code = 51
       resp.meta = "'" & res.path & "' NOT FOUND"
-    
-    try:
-      await client.send($resp.code & " " & resp.meta & "\r\n")
-      if resp.code == 20:
-        await client.send(resp.body)
-    except:
-      let msg = getCurrentExceptionMsg()
-      await client.send("40 TEMP ERROR " & msg & "\r\n")
 
   else:
-    await client.send("53 PROXY NOT SUPPORTED\r\n")
+    await client.send("53 UNKNOWN HOSTNAME\r\n")
+
+  try:
+    await client.send($resp.code & " " & resp.meta & "\r\n")
+    if resp.code == 20:
+      await client.send(resp.body)
+  except:
+    let msg = getCurrentExceptionMsg()
+    await client.send("40 TEMP ERROR " & msg & "\r\n")
 
 proc handle(client: AsyncSocket) {.async.} =
   let line = await client.recvLine()

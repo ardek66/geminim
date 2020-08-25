@@ -4,9 +4,10 @@ type CgiConf = tuple
   dir, virtDir: string
 
 type Settings* = object
-  vhosts*: StringTableRef
   port*: int
   certFile*, keyFile*: string
+  vhosts*: StringTableRef
+  redirects*: StringTableRef
   homeDir*: string
   cgi*: CgiConf
 
@@ -22,10 +23,11 @@ proc readSettings*(path: string): Settings =
   let conf = loadConfig(path)
 
   result = Settings(
-    vhosts: newStringTable(modeCaseSensitive),
     port: conf.get("port", "1965").parseInt,
     certFile: conf.get("certFile", "mycert.pem"),
     keyFile: conf.get("keyFile", "mykey.pem"),
+    vhosts: newStringTable(modeCaseSensitive),
+    redirects: newStringTable(modeCaseSensitive),
     homeDir: conf.get("homeDir", defaultHome),
     cgi: (dir: conf.get("dir", "cgi/", section = "CGI"),
           virtDir: conf.get("virtDir", "", section = "CGI")))
@@ -34,5 +36,7 @@ proc readSettings*(path: string): Settings =
     let
       hostname = rawHostname.strip
       dir = conf.get("dir", hostname, section = hostname)
-    if dirExists(dir): result.vhosts[hostname] = dir
-    else: echo "Directory " & dir & " does not exist. Not adding to hosts."
+      redirect = conf.get("redirect", "", section = hostname)
+    if redirect.len > 0: result.redirects[hostname] = redirect
+    elif dirExists(dir): result.vhosts[hostname] = dir
+    else: echo "Directory " & dir & " does not exist. Not adding ", hostname, " to hosts."
