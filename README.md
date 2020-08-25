@@ -2,6 +2,8 @@
 
 Geminim is a small server using the [gemini protocol](https://gemini.circumlunar.space/) written in the Nim programming language.
 
+Currently hosting gemini://idf.looting.uk
+
 ## Features
 * Lightweight
 * Simple .ini configuration
@@ -9,6 +11,7 @@ Geminim is a small server using the [gemini protocol](https://gemini.circumlunar
 * CGI
 
 ### Planned features:
+* Per-user directories
 * Client TLS-certificate
 
 
