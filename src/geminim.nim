@@ -150,7 +150,9 @@ proc handle(client: AsyncSocket) {.async.} =
   client.close()
 
 proc serve() {.async.} =
-  let ctx = newContext(certFile = settings.certFile, keyFile = settings.keyFile)
+  let ctx = newContext(certFile = settings.certFile,
+                       keyFile = settings.keyFile)
+  
   var server = newAsyncSocket()
   server.setSockOpt(OptReuseAddr, true)
   server.setSockOpt(OptReusePort, true)
@@ -160,7 +162,7 @@ proc serve() {.async.} =
   while true:
     let client = await server.accept()
     ctx.wrapConnectedSocket(client, handshakeAsServer)
-    asyncCheck client.handle()
+    await client.handle()
 
 if paramCount() != 1:
   echo "USAGE:"
@@ -168,5 +170,6 @@ if paramCount() != 1:
 elif fileExists(paramStr(1)):
   settings = readSettings(paramStr(1))
   waitFor serve()
+  runForever()
 else:
   echo paramStr(1) & ": file not found"
