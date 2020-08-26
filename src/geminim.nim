@@ -116,44 +116,50 @@ proc serveDir(response: FutureVar[Response], path, rootDir: string) {.async.} =
 proc parseRequest(client: AsyncSocket, line: string) {.async.} =
   let res = parseUri(line)
   var response = newFutureVar[Response]("parseRequest")
-  
-  if settings.redirects.hasKey(res.hostname):
-    resp.code = 30
-    resp.meta = settings.redirects[res.hostname]
-    
-  elif settings.vhosts.hasKey(res.hostname):
-    let vhost = (hostname: res.hostname,
-                 rootDir: settings.vhosts[res.hostname])
-    var
-      rootDir = vhost.rootDir
-      relPath = rootDir / res.path
-      filePath = relPath
-      
-    if res.path.startsWith("/~"):
-      let (user, newPath) = res.path.getUserDir
-      rootDir = vhost.hostname
-      relPath = rootDir / newPath
-      filePath = settings.homeDir / user / relPath
-      
-    if not (relPath.normalizedPath.startsWith(rootDir)):
-      filePath = vhost.rootDir
-    
-    resp.code = 20
-    resp.meta = "text/gemini"
-    
-    if res.path.isVirtDir(settings.cgi.virtDir):
-      await response.serveScript(res, vhost)
-    elif fileExists(filePath):
-      await response.serveFile(filePath)
-    elif dirExists(filePath):
-      await response.serveDir(filePath, rootDir)
-    else:
-      resp.code = 51
-      resp.meta = "'" & res.path & "' NOT FOUND"
 
+  if res.isAbsolute:
+  
+    if settings.redirects.hasKey(res.hostname):
+      resp.code = 30
+      resp.meta = settings.redirects[res.hostname]
+    
+    elif settings.vhosts.hasKey(res.hostname):
+      let vhost = (hostname: res.hostname,
+                   rootDir: settings.vhosts[res.hostname])
+      var
+        rootDir = vhost.rootDir
+        relPath = rootDir / res.path
+        filePath = relPath
+      
+      if res.path.startsWith("/~"):
+        let (user, newPath) = res.path.getUserDir
+        rootDir = vhost.hostname
+        relPath = rootDir / newPath
+        filePath = settings.homeDir / user / relPath
+      
+      if not (relPath.normalizedPath.startsWith(rootDir)):
+        filePath = vhost.rootDir
+    
+      resp.code = 20
+      resp.meta = "text/gemini"
+    
+      if res.path.isVirtDir(settings.cgi.virtDir):
+        await response.serveScript(res, vhost)
+      elif fileExists(filePath):
+        await response.serveFile(filePath)
+      elif dirExists(filePath):
+        await response.serveDir(filePath, rootDir)
+      else:
+        resp.code = 51
+        resp.meta = "'" & res.path & "' NOT FOUND"
+
+    else:
+      resp.code = 53
+      resp.meta = "UNKNOWN HOSTNAME"
+      
   else:
-    resp.code = 53
-    resp.meta = "UNKNOWN HOSTNAME"
+    resp.code = 59
+    resp.meta = "MALFORMED REQUEST"
 
   try:
     await client.send($resp.code & " " & resp.meta & "\r\n")
@@ -176,7 +182,7 @@ proc handle(client: AsyncSocket) {.async.} =
 proc serve() {.async.} =
   let ctx = newContext(certFile = settings.certFile,
                        keyFile = settings.keyFile)
-  
+
   var server = newAsyncSocket()
   server.setSockOpt(OptReuseAddr, true)
   server.setSockOpt(OptReusePort, true)
