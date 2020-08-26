@@ -4,6 +4,16 @@ import net, asyncnet, asyncdispatch, asyncfile,
 
 import config
 
+const
+  StatusInputRequired = 10
+  StatusSuccess = 20
+  StatusRedirect = 30
+  StatusTempError = 40
+  StatusError = 50
+  StatusNotFound = 51
+  StatusProxyRefused = 53
+  StatusMalformedRequest = 59
+  
 type VHost = tuple
   hostname, rootDir: string
 
@@ -51,12 +61,12 @@ proc serveScript(response: FutureVar[Response], res: Uri, vhost: VHost) {.async.
     scriptFile = settings.cgi.dir / script
 
   if not fileExists(scriptFile):
-    resp.code = 53
+    resp.code = StatusNotFound
     resp.meta = "CGI SCRIPT " & script & " NOT FOUND."
     return
   
   if query.len < 1:
-    resp.code = 10
+    resp.code = StatusInputRequired
     resp.meta = "ENTER INPUT "
     return
 
@@ -71,7 +81,7 @@ proc serveScript(response: FutureVar[Response], res: Uri, vhost: VHost) {.async.
   (resp.body, outp) = execCmdEx(scriptFile)
   
   if outp != 0:
-    resp.code = 40
+    resp.code = StatusError
     resp.meta = script & " FAILED WITH QUERY " & query
 
 proc serveFile(response: FutureVar[Response], path: string) {.async.} =
@@ -120,7 +130,7 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
   if res.isAbsolute:
   
     if settings.redirects.hasKey(res.hostname):
-      resp.code = 30
+      resp.code = StatusRedirect
       resp.meta = settings.redirects[res.hostname]
     
     elif settings.vhosts.hasKey(res.hostname):
@@ -140,7 +150,7 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
       if not (relPath.normalizedPath.startsWith(rootDir)):
         filePath = vhost.rootDir
     
-      resp.code = 20
+      resp.code = StatusSuccess
       resp.meta = "text/gemini"
     
       if res.path.isVirtDir(settings.cgi.virtDir):
@@ -150,20 +160,20 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
       elif dirExists(filePath):
         await response.serveDir(filePath, rootDir)
       else:
-        resp.code = 51
+        resp.code = StatusNotFound
         resp.meta = "'" & res.path & "' NOT FOUND"
 
     else:
-      resp.code = 53
-      resp.meta = "UNKNOWN HOSTNAME"
+      resp.code = StatusProxyRefused
+      resp.meta = "PROXY REFUSED"
       
   else:
-    resp.code = 59
+    resp.code = StatusMalformedRequest
     resp.meta = "MALFORMED REQUEST"
 
   try:
     await client.send($resp.code & " " & resp.meta & "\r\n")
-    if resp.code == 20:
+    if resp.code == StatusSuccess:
       await client.send(resp.body)
   except:
     let msg = getCurrentExceptionMsg()
