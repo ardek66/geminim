@@ -152,7 +152,8 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
       resp.meta = "'" & res.path & "' NOT FOUND"
 
   else:
-    await client.send("53 UNKNOWN HOSTNAME\r\n")
+    resp.code = 53
+    resp.meta = "UNKNOWN HOSTNAME"
 
   try:
     await client.send($resp.code & " " & resp.meta & "\r\n")
