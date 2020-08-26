@@ -130,8 +130,8 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
         let (user, newPath) = res.path.getUserDir
         rootDir = vhost.hostname
         relPath = rootDir / newPath
-        filePath = settings.homeDir / user / relPath
-      
+        filePath = settings.homeDir % [user] / relPath
+
       var resPath = res.path
       if not (relPath.normalizedPath.startsWith(rootDir)):
         filePath = vhost.rootDir

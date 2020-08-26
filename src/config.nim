@@ -12,8 +12,8 @@ type Settings* = object
   cgi*: CgiConf
 
 const defaultHome =
-  when defined(posix): "/home/"
-  else: "C:\\Users\\"
+  when defined(posix): "/home/$#/"
+  else: "C:\\Users\\$#\\"
 
 proc get(dict: Config, value, default: string, section = ""): string =
   result = dict.getSectionValue(section, value)
