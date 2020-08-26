@@ -29,21 +29,11 @@ m.register(ext = "gmi", mimetype = "text/gemini")
 
 template resp(): Response =
   response.mget()
-
-proc relativePath(path, dir: string): string =
-  if dir == "/":
-    return path
-
-  result = path
-  result.removePrefix(dir)
-  if not result.startsWith('/'):
-    result = '/' & result
   
 proc isVirtDir(path, virtDir: string): bool =
   virtDir.len > 0 and
   path.extractFilename.len > 0 and
   path.parentDir == virtDir
-
 
 proc getUserDir(path: string): (string, string) =
   var i = 2
@@ -94,27 +84,22 @@ proc serveFile(response: FutureVar[Response], path: string) {.async.} =
   else:
     resp.body = "##<Empty File>"
 
-proc serveDir(response: FutureVar[Response], path, rootDir: string) {.async.} =
+proc serveDir(response: FutureVar[Response], path, resPath: string) {.async.} =
   template link(path: string): string =
     "=> " / path
-
-  let resPath = path.relativePath(rootDir)
   
   resp.body.add "### Index of " & resPath & "\r\n"
   if resPath.parentDir != "":
     resp.body.add link(resPath.parentDir) & " [..]" & "\r\n"
   
   for kind, file in path.walkDir:
-    let
-      uriPath = file.relativePath(rootDir)
-      uriFile = uriPath.extractFilename
-
-    if uriFile.toLowerAscii == "index.gemini" or
-       uriFile.toLowerAscii == "index.gmi":
+    let fileName = file.extractFilename
+    if fileName.toLowerAscii == "index.gemini" or
+       fileName.toLowerAscii == "index.gmi":
       await response.serveFile(file)
       return
     
-    resp.body.add link(uriPath) & ' ' & uriFile
+    resp.body.add link(resPath / fileName) & ' ' & fileName
     case kind:
     of pcFile: resp.body.add " [FILE]"
     of pcDir: resp.body.add " [DIR]"
@@ -147,8 +132,10 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
         relPath = rootDir / newPath
         filePath = settings.homeDir / user / relPath
       
+      var resPath = res.path
       if not (relPath.normalizedPath.startsWith(rootDir)):
         filePath = vhost.rootDir
+        resPath = "/"
     
       resp.code = StatusSuccess
       resp.meta = "text/gemini"
@@ -158,7 +145,7 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
       elif fileExists(filePath):
         await response.serveFile(filePath)
       elif dirExists(filePath):
-        await response.serveDir(filePath, rootDir)
+        await response.serveDir(filePath, resPath)
       else:
         resp.code = StatusNotFound
         resp.meta = "'" & res.path & "' NOT FOUND"
