@@ -1,6 +1,7 @@
 import net, asyncnet, asyncdispatch, asyncfile,
        uri, mimetypes, strutils, strtabs,
-       os, osproc
+       os, osproc,
+       openssl, md5
 
 import config
 
@@ -23,13 +24,20 @@ type Response = object
 
 var settings: Settings
 
+var certMD5: string
+
 var m = newMimeTypes()
 m.register(ext = "gemini", mimetype = "text/gemini")
 m.register(ext = "gmi", mimetype = "text/gemini")
 
 template resp(): Response =
   response.mget()
-  
+
+proc SSL_CTX_set_session_id_context(ctx: SslCtx, id: string, idLen: int) {.importc, dynlib: DLLSSLName}
+
+proc sslSetSessionIdContext(ctx: SslContext, id: string = "") =
+  SSL_CTX_set_session_id_context(ctx.context, id, id.len)
+
 proc isVirtDir(path, virtDir: string): bool =
   virtDir.len > 0 and
   path.extractFilename.len > 0 and
@@ -164,12 +172,9 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
 
 proc handle(client: AsyncSocket) {.async.} =
   let line = await client.recvLine()
-  echo line
-  if line.len == 0:
-    echo "client disconnected"
-    client.close()
-    return
-  await client.parseRequest(line)
+  if line.len > 0:
+    echo line
+    await client.parseRequest(line)
   client.close()
 
 proc serve() {.async.} =
@@ -182,6 +187,7 @@ proc serve() {.async.} =
   server.bindAddr(Port(settings.port))
   server.listen()
   ctx.wrapSocket(server)
+  ctx.sslSetSessionIdContext(id = certMD5)
   while true:
     let client = await server.accept()
     ctx.wrapConnectedSocket(client, handshakeAsServer)
@@ -192,6 +198,7 @@ if paramCount() != 1:
   echo "./geminim <path/to/config.ini>"
 elif fileExists(paramStr(1)):
   settings = readSettings(paramStr(1))
+  certMD5 = readFile(settings.certFile).getMD5()
   waitFor serve()
   runForever()
 else:
