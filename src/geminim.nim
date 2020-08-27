@@ -88,7 +88,7 @@ proc serveDir(response: FutureVar[Response], path, resPath: string) {.async.} =
   template link(path: string): string =
     "=> " / path
   
-  resp.body.add "### Index of " & resPath & "\r\n"
+  resp.body.add "### Index of " & resPath.normalizedPath & "\r\n"
   if resPath.parentDir != "":
     resp.body.add link(resPath.splitPath.head) & " [..]" & "\r\n"
   
@@ -121,17 +121,15 @@ proc parseRequest(client: AsyncSocket, line: string) {.async.} =
                    rootDir: settings.vhosts[res.hostname])
       var
         rootDir = vhost.rootDir
-        relPath = rootDir / res.path
-        filePath = relPath
+        filePath = rootDir / res.path
       
       if res.path.startsWith("/~"):
         let (user, newPath) = res.path.getUserDir
-        rootDir = vhost.hostname
-        relPath = rootDir / newPath
-        filePath = settings.homeDir % [user] / relPath
+        rootDir = settings.homeDir % [user] / vhost.hostname
+        filePath = rootDir / newPath
 
       var resPath = res.path
-      if not (relPath.normalizedPath.startsWith(rootDir)):
+      if not filePath.startsWith(rootDir):
         filePath = vhost.rootDir
         resPath = "/"
     
