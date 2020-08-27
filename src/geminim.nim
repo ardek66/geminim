@@ -90,7 +90,7 @@ proc serveDir(response: FutureVar[Response], path, resPath: string) {.async.} =
   
   resp.body.add "### Index of " & resPath & "\r\n"
   if resPath.parentDir != "":
-    resp.body.add link(resPath.parentDir) & " [..]" & "\r\n"
+    resp.body.add link(resPath.splitPath.head) & " [..]" & "\r\n"
   
   for kind, file in path.walkDir:
     let fileName = file.extractFilename
@@ -105,8 +105,6 @@ proc serveDir(response: FutureVar[Response], path, resPath: string) {.async.} =
     of pcDir: resp.body.add " [DIR]"
     of pcLinkToFile, pcLinkToDir: resp.body.add " [SYMLINK]"
     resp.body.add "\r\n"
-  
-  if resp.body.len == 0: resp.body = "Directory is empty"
 
 proc parseRequest(client: AsyncSocket, line: string) {.async.} =
   let res = parseUri(line)
