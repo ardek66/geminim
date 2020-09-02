@@ -49,6 +49,11 @@ proc getUserDir(path: string): (string, string) =
   
   result[1] = path[i..^1]
 
+proc readAsyncFile(path: string): Future[string] {.async.} =
+  let file = openAsync(path)
+  result = await file.readAll()
+  file.close()
+
 proc serveScript(res: Uri, vhost: VHost): Future[Response] {.async.} =
   let
     query = res.query
@@ -76,10 +81,8 @@ proc serveScript(res: Uri, vhost: VHost): Future[Response] {.async.} =
   return Response(code: StatusSuccess, meta: "text/gemini", body: body)
 
 proc serveFile(path: string): Future[Response] {.async.} =
-  let file = openAsync(path)
   result.code = StatusSuccess
-  result.body = await file.readAll()
-  file.close()
+  result.body = await readAsyncFile(path)
 
   if result.body.len > 0:
     result.meta = m.getMimetype(path.splitFile.ext.toLowerAscii)
@@ -93,11 +96,16 @@ proc serveDir(path, resPath: string): Future[Response] {.async.} =
 
   result.code = StatusSuccess
   result.meta = "text/gemini"
+
+  let headerPath = path / settings.dirHeader
+  if fileExists(headerPath):
+    let banner = await readAsyncFile(headerPath)
+    result.body.add banner & "\n"
   
-  result.body.add "### Index of " & resPath.normalizedPath & "\r\n"
+  result.body.add "### Index of " & resPath.normalizedPath & "\n"
+  
   if resPath.parentDir != "":
-    result.body.add link(resPath.splitPath.head) & " [..]" & "\r\n"
-  
+    result.body.add link(resPath.splitPath.head) & " [..]" & "\n"
   for kind, file in path.walkDir:
     let fileName = file.extractFilename
     if fileName.toLowerAscii == "index.gemini" or
@@ -109,7 +117,7 @@ proc serveDir(path, resPath: string): Future[Response] {.async.} =
     of pcFile: result.body.add " [FILE]"
     of pcDir: result.body.add " [DIR]"
     of pcLinkToFile, pcLinkToDir: result.body.add " [SYMLINK]"
-    result.body.add "\r\n"
+    result.body.add "\n"
 
 proc parseRequest(line: string): Future[Response] {.async.} =
   let res = parseUri(line)
@@ -122,7 +130,7 @@ proc parseRequest(line: string): Future[Response] {.async.} =
     
   elif settings.vhosts.hasKey(res.hostname):
     let vhost = (hostname: res.hostname,
-                   rootDir: settings.vhosts[res.hostname])
+                 rootDir: settings.vhosts[res.hostname])
     var
       rootDir = vhost.rootDir
       filePath = rootDir / res.path
@@ -180,7 +188,7 @@ proc serve() {.async.} =
       let client = await server.accept()
       ctx.wrapConnectedSocket(client, handshakeAsServer)
       await client.handle()
-    except:
+    except SslError:
       echo getCurrentExceptionMsg()
 
 if paramCount() != 1:

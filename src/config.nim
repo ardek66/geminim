@@ -9,6 +9,7 @@ type Settings* = object
   vhosts*: StringTableRef
   redirects*: StringTableRef
   homeDir*: string
+  dirHeader*: string
   cgi*: CgiConf
 
 const defaultHome =
@@ -23,6 +24,7 @@ proc readSettings*(path: string): Settings =
     vhosts: newStringTable(modeCaseSensitive),
     redirects: newStringTable(modeCaseSensitive),
     homeDir: defaultHome,
+    dirHeader: "header.gemini",
     cgi: (dir: "cgi/", virtDir: ""))
 
   var f = newFilestream(path, fmRead)
@@ -45,6 +47,7 @@ proc readSettings*(path: string): Settings =
           of "certfile": result.certfile = e.value
           of "keyfile": result.keyfile = e.value
           of "homedir": result.homeDir = e.value
+          of "dirheader": result.dirHeader = e.value
         of "vhosts":
           if dirExists(e.value):
             result.vhosts[e.key] = e.value
