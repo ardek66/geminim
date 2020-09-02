@@ -45,23 +45,19 @@ proc readSettings*(path: string): Settings =
           of "certfile": result.certfile = e.value
           of "keyfile": result.keyfile = e.value
           of "homedir": result.homeDir = e.value
-        
         of "vhosts":
           if dirExists(e.value):
             result.vhosts[e.key] = e.value
           else:
             echo e.value & " does not exist or is not a directory"
             echo "Not adding " & e.key & " to hosts\n"
-          
         of "redirects":
           result.redirects[e.key] = e.value
-          
         of "cgi":
           case e.key.toLowerAscii
           of "dir":
             if dirExists(e.value): result.cgi.dir = e.value
             else: echo "CGI directory " & e.value & " does not exist\n"
-          
           of "virtdir": result.cgi.virtDir = e.value
 
       else: discard
