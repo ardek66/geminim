@@ -30,9 +30,6 @@ var m = newMimeTypes()
 m.register(ext = "gemini", mimetype = "text/gemini")
 m.register(ext = "gmi", mimetype = "text/gemini")
 
-template resp(): Response =
-  response.mget()
-
 proc SSL_CTX_set_session_id_context(ctx: SslCtx, id: string, idLen: int) {.importc, dynlib: DLLSSLName}
 
 proc sslSetSessionIdContext(ctx: SslContext, id: string = "") =
@@ -52,21 +49,17 @@ proc getUserDir(path: string): (string, string) =
   
   result[1] = path[i..^1]
 
-proc serveScript(response: FutureVar[Response], res: Uri, vhost: VHost) {.async.} =
+proc serveScript(res: Uri, vhost: VHost): Future[Response] {.async.} =
   let
     query = res.query
     script = res.path.extractFilename
     scriptFile = settings.cgi.dir / script
 
   if not fileExists(scriptFile):
-    resp.code = StatusNotFound
-    resp.meta = "CGI SCRIPT " & script & " NOT FOUND."
-    return
+    return Response(code: StatusNotFound, meta: "CGI SCRIPT " & script & " NOT FOUND.")
   
   if query.len < 1:
-    resp.code = StatusInputRequired
-    resp.meta = "ENTER INPUT "
-    return
+    return Response(code: StatusInputRequired, meta: "ENTER INPUT ")
 
   putEnv("SCRIPT_NAME", script)
   putEnv("SCRIPT_FILENAME", scriptFile)
@@ -75,106 +68,100 @@ proc serveScript(response: FutureVar[Response], res: Uri, vhost: VHost) {.async.
   putEnv("SERVER_PORT", $settings.port)
   putEnv("QUERY_STRING", query)
   
-  var outp: int
-  (resp.body, outp) = execCmdEx(scriptFile)
+  let (body, outp) = execCmdEx(scriptFile)
   
   if outp != 0:
-    resp.code = StatusError
-    resp.meta = script & " FAILED WITH QUERY " & query
+    return Response(code: StatusError, meta: script & " FAILED WITH QUERY " & query)
 
-proc serveFile(response: FutureVar[Response], path: string) {.async.} =
+  return Response(code: StatusSuccess, meta: "text/gemini", body: body)
+
+proc serveFile(path: string): Future[Response] {.async.} =
   let file = openAsync(path)
-  resp.body = await file.readAll()
+  result.code = StatusSuccess
+  result.body = await file.readAll()
   file.close()
-  
-  if resp.body.len > 0:
-    resp.meta = m.getMimetype(path.splitFile.ext.toLowerAscii)
-  else:
-    resp.body = "##<Empty File>"
 
-proc serveDir(response: FutureVar[Response], path, resPath: string) {.async.} =
+  if result.body.len > 0:
+    result.meta = m.getMimetype(path.splitFile.ext.toLowerAscii)
+  else:
+    result.meta = "text/gemini"
+    result.body = "##<Empty File>"
+
+proc serveDir(path, resPath: string): Future[Response] {.async.} =
   template link(path: string): string =
     "=> " / path
+
+  result.code = StatusSuccess
+  result.meta = "text/gemini"
   
-  resp.body.add "### Index of " & resPath.normalizedPath & "\r\n"
+  result.body.add "### Index of " & resPath.normalizedPath & "\r\n"
   if resPath.parentDir != "":
-    resp.body.add link(resPath.splitPath.head) & " [..]" & "\r\n"
+    result.body.add link(resPath.splitPath.head) & " [..]" & "\r\n"
   
   for kind, file in path.walkDir:
     let fileName = file.extractFilename
     if fileName.toLowerAscii == "index.gemini" or
        fileName.toLowerAscii == "index.gmi":
-      await response.serveFile(file)
-      return
+      return await serveFile(file)
     
-    resp.body.add link(resPath / fileName) & ' ' & fileName
+    result.body.add link(resPath / fileName) & ' ' & fileName
     case kind:
-    of pcFile: resp.body.add " [FILE]"
-    of pcDir: resp.body.add " [DIR]"
-    of pcLinkToFile, pcLinkToDir: resp.body.add " [SYMLINK]"
-    resp.body.add "\r\n"
+    of pcFile: result.body.add " [FILE]"
+    of pcDir: result.body.add " [DIR]"
+    of pcLinkToFile, pcLinkToDir: result.body.add " [SYMLINK]"
+    result.body.add "\r\n"
 
-proc parseRequest(client: AsyncSocket, line: string) {.async.} =
+proc parseRequest(line: string): Future[Response] {.async.} =
   let res = parseUri(line)
-  var response = newFutureVar[Response]("parseRequest")
-
-  if res.isAbsolute:
   
-    if settings.redirects.hasKey(res.hostname):
-      resp.code = StatusRedirect
-      resp.meta = settings.redirects[res.hostname]
+  if not res.isAbsolute:
+    return Response(code: StatusMalformedRequest, meta: "MALFORMED REQUEST")
+  
+  if settings.redirects.hasKey(res.hostname):
+    return Response(code: StatusRedirect, meta: settings.redirects[res.hostname])
     
-    elif settings.vhosts.hasKey(res.hostname):
-      let vhost = (hostname: res.hostname,
+  elif settings.vhosts.hasKey(res.hostname):
+    let vhost = (hostname: res.hostname,
                    rootDir: settings.vhosts[res.hostname])
-      var
-        rootDir = vhost.rootDir
-        filePath = rootDir / res.path
+    var
+      rootDir = vhost.rootDir
+      filePath = rootDir / res.path
       
-      if res.path.startsWith("/~"):
-        let (user, newPath) = res.path.getUserDir
-        rootDir = settings.homeDir % [user] / vhost.hostname
-        filePath = rootDir / newPath
+    if res.path.startsWith("/~"):
+      let (user, newPath) = res.path.getUserDir
+      rootDir = settings.homeDir % [user] / vhost.hostname
+      filePath = rootDir / newPath
 
-      var resPath = res.path
-      if not filePath.startsWith(rootDir):
-        filePath = vhost.rootDir
-        resPath = "/"
+    var resPath = res.path
+    if not filePath.startsWith(rootDir):
+      filePath = vhost.rootDir
+      resPath = "/"
     
-      resp.code = StatusSuccess
-      resp.meta = "text/gemini"
-    
-      if res.path.isVirtDir(settings.cgi.virtDir):
-        await response.serveScript(res, vhost)
-      elif fileExists(filePath):
-        await response.serveFile(filePath)
-      elif dirExists(filePath):
-        await response.serveDir(filePath, resPath)
-      else:
-        resp.code = StatusNotFound
-        resp.meta = "'" & res.path & "' NOT FOUND"
-
+    if res.path.isVirtDir(settings.cgi.virtDir):
+      return await serveScript(res, vhost)
+    elif fileExists(filePath):
+      return await serveFile(filePath)
+    elif dirExists(filePath):
+      return await serveDir(filePath, resPath)
     else:
-      resp.code = StatusProxyRefused
-      resp.meta = "PROXY REFUSED"
-      
-  else:
-    resp.code = StatusMalformedRequest
-    resp.meta = "MALFORMED REQUEST"
+      return Response(code: StatusNotFound, meta: "'" & res.path & "' NOT FOUND")
 
-  try:
-    await client.send($resp.code & " " & resp.meta & "\r\n")
-    if resp.code == StatusSuccess:
-      await client.send(resp.body)
-  except:
-    let msg = getCurrentExceptionMsg()
-    await client.send("40 TEMP ERROR " & msg & "\r\n")
+  else:
+    return Response(code: StatusProxyRefused, meta: "PROXY REFUSED")
 
 proc handle(client: AsyncSocket) {.async.} =
   let line = await client.recvLine()
   if line.len > 0:
     echo line
-    await client.parseRequest(line)
+    try:
+      let resp = await parseRequest(line)
+      await client.send($resp.code & ' ' & resp.meta & "\r\n")
+      if resp.code == StatusSuccess:
+        await client.send(resp.body)
+    except:
+      await client.send("40 INTERNAL ERROR\r\n")
+      echo getCurrentExceptionMsg()
+      
   client.close()
 
 proc serve() {.async.} =
@@ -189,9 +176,12 @@ proc serve() {.async.} =
   ctx.wrapSocket(server)
   ctx.sslSetSessionIdContext(id = certMD5)
   while true:
-    let client = await server.accept()
-    ctx.wrapConnectedSocket(client, handshakeAsServer)
-    await client.handle()
+    try:
+      let client = await server.accept()
+      ctx.wrapConnectedSocket(client, handshakeAsServer)
+      await client.handle()
+    except:
+      echo getCurrentExceptionMsg()
 
 if paramCount() != 1:
   echo "USAGE:"
