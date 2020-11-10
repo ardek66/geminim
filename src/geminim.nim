@@ -183,10 +183,12 @@ proc serve() {.async.} =
   ctx.wrapSocket(server)
   ctx.sslSetSessionIdContext(id = certMD5)
   while true:
-    defer: echo getCurrentExceptionMsg()
-    let client = await server.accept()
-    ctx.wrapConnectedSocket(client, handshakeAsServer)
-    await client.handle()
+    try:
+      let client = await server.accept()
+      ctx.wrapConnectedSocket(client, handshakeAsServer)
+      await client.handle()
+    except:
+      echo getCurrentExceptionMsg()
 
 if paramCount() != 1:
   echo "USAGE:"
