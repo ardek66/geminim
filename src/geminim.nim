@@ -44,15 +44,14 @@ proc getUserDir(path: string): (string, string) =
   var i = 2
   while i < path.len:
     if path[i] in {DirSep, AltSep}: break
-    result[0].add path[i]
     inc i
-  
-  result[1] = path[i..^1]
+
+  result = (path[2..<i], path[i..^1])
 
 proc readAsyncFile(path: string): Future[string] {.async.} =
   let file = openAsync(path)
+  defer: file.close()
   result = await file.readAll()
-  file.close()
 
 proc serveScript(res: Uri, vhost: VHost): Future[Response] {.async.} =
   let
@@ -184,12 +183,10 @@ proc serve() {.async.} =
   ctx.wrapSocket(server)
   ctx.sslSetSessionIdContext(id = certMD5)
   while true:
-    try:
-      let client = await server.accept()
-      ctx.wrapConnectedSocket(client, handshakeAsServer)
-      await client.handle()
-    except SslError:
-      echo getCurrentExceptionMsg()
+    defer: echo getCurrentExceptionMsg()
+    let client = await server.accept()
+    ctx.wrapConnectedSocket(client, handshakeAsServer)
+    await client.handle()
 
 if paramCount() != 1:
   echo "USAGE:"
