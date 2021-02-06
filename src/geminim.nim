@@ -51,7 +51,7 @@ proc getUserDir(path: string): (string, string) =
 proc readAsyncFile(path: string): Future[string] {.async.} =
   let file = openAsync(path)
   defer: file.close()
-  result = await file.readAll()
+  return await file.readAll()
 
 proc serveScript(res: Uri, vhost: VHost): Future[Response] {.async.} =
   let
@@ -182,11 +182,14 @@ proc serve() {.async.} =
   server.listen()
   ctx.wrapSocket(server)
   ctx.sslSetSessionIdContext(id = certMD5)
+  
+  var client: AsyncSocket
   while true:
     try:
-      let client = await server.accept()
+      client = await server.accept()
       ctx.wrapConnectedSocket(client, handshakeAsServer)
       await client.handle()
+      client.close()
     except:
       echo getCurrentExceptionMsg()
 
@@ -197,6 +200,5 @@ elif fileExists(paramStr(1)):
   settings = readSettings(paramStr(1))
   certMD5 = readFile(settings.certFile).getMD5()
   waitFor serve()
-  runForever()
 else:
   echo paramStr(1) & ": file not found"
