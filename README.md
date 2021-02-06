@@ -14,5 +14,4 @@ Currently hosting gemini://idf.looting.uk
 ### Planned features:
 * Client TLS-certificate([experimental branch available](https://github.com/ardek66/geminim/tree/experimental)
 
-
 **Note:** This is my first serious attempt at coding a server. Help and criticism is always welcome :D
