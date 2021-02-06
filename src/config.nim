@@ -8,7 +8,9 @@ type Settings* = object
   certFile*, keyFile*: string
   vhosts*: StringTableRef
   redirects*: StringTableRef
+  authZones*: StringTableRef
   homeDir*: string
+  certsDir*: string
   dirHeader*: string
   cgi*: CgiConf
 
@@ -23,7 +25,9 @@ proc readSettings*(path: string): Settings =
     keyFile: "mykey.pem",
     vhosts: newStringTable(modeCaseSensitive),
     redirects: newStringTable(modeCaseSensitive),
+    authZones: newStringTable(modeCaseSensitive),
     homeDir: defaultHome,
+    certsDir: "certs",
     dirHeader: "header.gemini",
     cgi: (dir: "cgi/", virtDir: ""))
 
@@ -47,6 +51,7 @@ proc readSettings*(path: string): Settings =
           of "certfile": result.certfile = e.value
           of "keyfile": result.keyfile = e.value
           of "homedir": result.homeDir = e.value
+          of "certsdir": result.certsDir = e.value
           of "dirheader": result.dirHeader = e.value
         of "vhosts":
           if dirExists(e.value):
@@ -56,6 +61,8 @@ proc readSettings*(path: string): Settings =
             echo "Not adding " & e.key & " to hosts\n"
         of "redirects":
           result.redirects[e.key] = e.value
+        of "authorizedzones":
+          result.authZones[e.key] = e.value
         of "cgi":
           case e.key.toLowerAscii
           of "dir":
