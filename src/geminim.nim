@@ -205,9 +205,11 @@ proc serve() {.async.} =
       client = await server.accept()
       ctx.wrapConnectedSocket(client, handshakeAsServer)
       await client.handle()
-      client.close()
     except:
+      await client.send("40 INTERNAL ERROR\r\n")
       echo getCurrentExceptionMsg()
+
+    client.close()
 
 if paramCount() != 1:
   echo "USAGE:"
