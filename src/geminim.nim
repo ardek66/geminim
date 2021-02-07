@@ -13,6 +13,9 @@ const
   StatusNotFound = 51
   StatusProxyRefused = 53
   StatusMalformedRequest = 59
+  StatusCertRequired = 60
+  StatusCertUnauth = 61
+  StatusCertInvalid = 62
   
 type VHost = tuple
   hostname, rootDir: string
@@ -117,7 +120,7 @@ proc authorisedCert(clientCert, file: string): Future[bool] {.async.} =
   if file.len > 0:
     return clientCert in parsePEM(await readAsyncFile(settings.certsDir / file))
     
-  return true
+  return
 
 proc parseRequest(line, clientCert: string): Future[Response] {.async.} =
   let res = parseUri(line)
@@ -127,23 +130,29 @@ proc parseRequest(line, clientCert: string): Future[Response] {.async.} =
   
   if settings.redirects.hasKey(res.hostname):
     return Response(code: StatusRedirect, meta: settings.redirects[res.hostname])
-    
-  elif settings.vhosts.hasKey(res.hostname):
-    let vhost = (hostname: res.hostname,
-                 rootDir: settings.vhosts[res.hostname])
-    let hostpath = res.hostname / res.path
 
+  if clientCert.len > 0:
+    if clientCert.certStillInvalid:
+      return Response(code: StatusCertInvalid, meta: "CERTIFICATE IS NOT VALID YET")
+    
+    if clientCert.certExpired:
+      return Response(code: StatusCertInvalid, meta: "CERTIFICATE HAS EXPIRED")
+  
+  if settings.vhosts.hasKey(res.hostname):
+    let
+      vhost = (hostname: res.hostname,
+               rootDir: settings.vhosts[res.hostname])
+      hostpath = res.hostname / res.path
+    
     for key, val in settings.authZones.pairs:
-      if hostpath.startsWith(key) and clientCert.len < 1:
-        return Response(code: 60, meta: "CERTIFICATE REQUIRED")
-        
-      if clientCert.certStillInvalid:
-        return Response(code: 62, meta: "CERTIFICATE IS NOT VALID YET")
-      if clientCert.certExpired:
-        return Response(code: 62, meta: "CERTIFICATE HAS EXPIRED")
-          
-      if not await clientCert.authorisedCert(val):
-        return Response(code: 61, meta: "CERTIFICATE NOT AUTHORISED")
+      if hostpath.startsWith(key):
+        if clientCert.len < 1:
+          return Response(code: StatusCertRequired, meta: "CERTIFICATE REQUIRED")
+
+        if not await clientCert.authorisedCert(val):
+          return Response(code: StatusCertUnauth, meta: "CERTIFICATE NOT AUTHORISED")
+
+      break
 
     var
       rootDir = vhost.rootDir
@@ -182,10 +191,8 @@ proc handle(client: AsyncSocket) {.async.} =
       if resp.code == StatusSuccess:
         await client.send(resp.body)
     except:
-      await client.send("40 INTERNAL ERROR\r\n")
       echo getCurrentExceptionMsg()
-      
-  client.close()
+      await client.send("40 INTERNAL ERROR\r\n")
 
 proc serve() {.async.} =
   let ctx = newContext(certFile = settings.certFile,
@@ -197,19 +204,17 @@ proc serve() {.async.} =
   server.bindAddr(Port(settings.port))
   server.listen()
   ctx.wrapSocket(server)
-  ctx.sslSetSessionIdContext(id = certMD5)
-  
-  var client: AsyncSocket
+  ctx.sslSetSessionIdContext(certMD5)
+
   while true:
+    let client = await server.accept()
     try:
-      client = await server.accept()
       ctx.wrapConnectedSocket(client, handshakeAsServer)
       await client.handle()
     except:
-      await client.send("40 INTERNAL ERROR\r\n")
       echo getCurrentExceptionMsg()
-
-    client.close()
+    finally:
+      client.close()
 
 if paramCount() != 1:
   echo "USAGE:"

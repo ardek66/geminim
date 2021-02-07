@@ -12,12 +12,11 @@ proc X509_STORE_CTX_set_error(ctx: PX509_STORE, error: cint) {.importc, dynlib: 
 proc SSL_CTX_set_session_id_context*(ctx: SslCtx, id: string, idLen: int) {.importc, dynlib: DLLSSLName.}
 proc SSL_CTX_set_cert_verify_callback*(ctx: SslCtx, cb: proc(ctx: PX509_STORE, args: pointer): int {.cdecl.}, args: pointer) {.importc, dynlib: DLLSSLName.}
 
-proc verify_cb*(ctx: PX509_STORE, args: pointer): int {.cdecl.} =
-  ctx.X509_verify_cert()
-  if ctx.X509_STORE_CTX_get_error == 18:
-    ctx.X509_STORE_CTX_set_error(0)
-  return 1
+proc sslSetSessionIdContext*(ctx: SslContext, id: string = "") =
+  SSL_CTX_set_session_id_context(ctx.context, id, id.len)
 
+proc verify_cb*(ctx: PX509_STORE, args: pointer): int {.cdecl.} =
+  return 1
 
 proc getX509Cert*(cert: PX509): string =
   if cert == nil: return
