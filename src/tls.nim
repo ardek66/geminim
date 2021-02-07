@@ -3,20 +3,14 @@ include asyncnet
 export openssl
 
 proc PEM_read_bio_X509(bio: BIO, x: PX509, password_cb: cint, u: pointer): PX509 {.importc, dynlib: DLLSSLName.}
-proc X509_getm_notBefore(x: PX509): pointer {.importc, dynlib: DLLSSLName.}
-proc X509_getm_notAfter(x: PX509): pointer {.importc, dynlib: DLLSSLName.}
-proc X509_cmp_current_time(time: pointer): cint {.importc, dynlib: DLLSSLName.}
-proc X509_verify_cert(ctx: PX509_STORE) {.importc, dynlib: DLLSSLName.}
-proc X509_STORE_CTX_get_error(ctx: PX509_STORE): cint {.importc, dynlib: DLLSSLName.}
-proc X509_STORE_CTX_set_error(ctx: PX509_STORE, error: cint) {.importc, dynlib: DLLSSLName.}
+proc SSL_get_verify_result(ssl: SslPtr): clong {.importc, dynlib: DLLSSLName.}
 proc SSL_CTX_set_session_id_context*(ctx: SslCtx, id: string, idLen: int) {.importc, dynlib: DLLSSLName.}
-proc SSL_CTX_set_cert_verify_callback*(ctx: SslCtx, cb: proc(ctx: PX509_STORE, args: pointer): int {.cdecl.}, args: pointer) {.importc, dynlib: DLLSSLName.}
+proc SSL_CTX_set_verify*(ctx: SslCtx, mode: int, cb: proc(preverify_ok: int, ctx: PX509_STORE): int {.cdecl.}) {.importc, dynlib: DLLSSLName.}
 
 proc sslSetSessionIdContext*(ctx: SslContext, id: string = "") =
   SSL_CTX_set_session_id_context(ctx.context, id, id.len)
 
-proc verify_cb*(ctx: PX509_STORE, args: pointer): int {.cdecl.} =
-  return 1
+proc verify_cb*(preverify_ok: int, ctx: PX509_STORE): int{.cdecl.} = 1
 
 proc getX509Cert*(cert: PX509): string =
   if cert == nil: return
@@ -30,11 +24,12 @@ proc getX509Cert*(data: string): string =
 
   return getX509Cert(x509)
 
-proc getPeerCertificate*(socket: AsyncSocket): string =
-  if socket.sslHandle.SSL_get_verify_result() != X509_V_OK:
-    return
+proc getPeerCertificate*(socket: AsyncSocket): PX509 {.raises: SSLError.} =
+  let err = socket.sslHandle.SSL_get_verify_result()
+  if err > 0 and err != 18:
+    raise newException(SSLError, "Certificate invalid or has expired")
   
-  return socket.sslHandle.SSL_get_peer_certificate().getX509Cert()
+  return socket.sslHandle.SSL_get_peer_certificate()
 
 proc parsePEM*(data: string): seq[string] =
   const
@@ -51,11 +46,3 @@ proc parsePEM*(data: string): seq[string] =
 
     result.add data[beginMark..endMark+endSep.len].getX509Cert()
     parseTop = endMark + endSep.len
-
-proc certStillInvalid*(cert: string): bool =
-  let time = cert.d2i_x509.X509_getm_notBefore()
-  return time.X509_cmp_current_time() == 1
-
-proc certExpired*(cert: string): bool =
-  let time = cert.d2i_x509.X509_getm_notAfter()
-  return time.X509_cmp_current_time() == -1

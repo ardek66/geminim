@@ -130,13 +130,6 @@ proc parseRequest(line, clientCert: string): Future[Response] {.async.} =
   
   if settings.redirects.hasKey(res.hostname):
     return Response(code: StatusRedirect, meta: settings.redirects[res.hostname])
-
-  if clientCert.len > 0:
-    if clientCert.certStillInvalid:
-      return Response(code: StatusCertInvalid, meta: "CERTIFICATE IS NOT VALID YET")
-    
-    if clientCert.certExpired:
-      return Response(code: StatusCertInvalid, meta: "CERTIFICATE HAS EXPIRED")
   
   if settings.vhosts.hasKey(res.hostname):
     let
@@ -185,11 +178,18 @@ proc handle(client: AsyncSocket) {.async.} =
   if line.len > 0:
     echo line
     try:
-      let resp = await parseRequest(line, client.getPeerCertificate())
+      let
+        cert = client.getPeerCertificate()
+        resp = await parseRequest(line, cert.getX509Cert())
+      
       await client.send($resp.code & ' ' & resp.meta & "\r\n")
       
       if resp.code == StatusSuccess:
         await client.send(resp.body)
+
+    except SSLError:
+      await client.send("62 CERT INVALID OR HAS EXPIRED\r\n")
+    
     except:
       echo getCurrentExceptionMsg()
       await client.send("40 INTERNAL ERROR\r\n")
