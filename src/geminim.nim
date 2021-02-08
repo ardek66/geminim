@@ -197,7 +197,7 @@ proc handle(client: AsyncSocket) {.async.} =
 proc serve() {.async.} =
   let ctx = newContext(certFile = settings.certFile,
                        keyFile = settings.keyFile)
-  ctx.context.SSL_CTX_set_cert_verify_callback(verify_cb, nil)
+  ctx.context.SSL_CTX_set_verify(SslVerifyPeer, verify_cb)
   var server = newAsyncSocket()
   server.setSockOpt(OptReuseAddr, true)
   server.setSockOpt(OptReusePort, true)
