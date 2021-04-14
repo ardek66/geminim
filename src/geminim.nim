@@ -1,7 +1,6 @@
 import net, streams, asyncnet, asyncdispatch,
        uri, mimetypes, strutils, strtabs,
-       os, osproc,
-       openssl, md5
+       os, osproc, md5
 
 import config
 
@@ -108,7 +107,7 @@ proc serveDir(path, resPath: string): Future[Response] {.async.} =
 proc parseRequest(line: string): Future[Response] {.async.} =
   let res = parseUri(line)
   
-  if not res.isAbsolute:
+  if line.len > 1024 or res.scheme != "gemini" or res.hostname.len == 0:
     return Response(code: StatusMalformedRequest, meta: "MALFORMED REQUEST")
   
   if settings.redirects.hasKey(res.hostname):
