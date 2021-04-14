@@ -31,10 +31,6 @@ var m = newMimeTypes()
 m.register(ext = "gemini", mimetype = "text/gemini")
 m.register(ext = "gmi", mimetype = "text/gemini")
 
-proc SSL_CTX_set_session_id_context(ctx: SslCtx, id: string, idLen: int) {.importc, dynlib: DLLSSLName}
-
-proc sslSetSessionIdContext(ctx: SslContext, id: string = "") =
-  SSL_CTX_set_session_id_context(ctx.context, id, id.len)
 
 template fileResponse(path: string): Response =
   Response(code: StatusSuccess,
