@@ -20,8 +20,8 @@ type VHost = tuple
 
 type Response = object
   code: int
-  meta: string
-  bodyStream: Stream
+  meta, body: string
+  fileStream: FileStream
 
 var settings: Settings
 
@@ -34,7 +34,7 @@ m.register(ext = "gmi", mimetype = "text/gemini")
 
 template fileResponse(path: string): Response =
   Response(code: StatusSuccess,
-           bodyStream: newFileStream(path),
+           fileStream: newFileStream(path),
            meta: m.getMimetype(toLowerAscii(path.splitFile.ext)))
       
 proc isVirtDir(path, virtDir: string): bool =
@@ -74,8 +74,7 @@ proc serveScript(res: Uri, vhost: VHost): Future[Response] {.async.} =
   if outp != 0:
     return Response(code: StatusError, meta: script & " FAILED WITH QUERY " & query)
 
-  return Response(code: StatusSuccess, meta: "text/gemini",
-                  bodyStream: newStringStream(body))
+  return Response(code: StatusSuccess, meta: "text/gemini", body: body)
 
 proc serveDir(path, resPath: string): Future[Response] {.async.} =
   template link(path: string): string =
@@ -83,29 +82,28 @@ proc serveDir(path, resPath: string): Future[Response] {.async.} =
   
   result.code = StatusSuccess
   result.meta = "text/gemini"
-  result.bodyStream = newStringStream()
   
   let headerPath = path / settings.dirHeader
   if fileExists(headerPath):
     let banner = readFile(headerPath)
-    result.bodyStream.write banner & "\n"
+    result.body.add banner & "\n"
   
-  result.bodyStream.write "### Index of " & resPath.normalizedPath & "\n"
+  result.body.add "### Index of " & resPath.normalizedPath & "\n"
   
   if resPath.parentDir != "":
-    result.bodyStream.write link(resPath.splitPath.head) & " [..]" & "\n"
+    result.body.add link(resPath.splitPath.head) & " [..]" & "\n"
   for kind, file in path.walkDir:
     let fileName = file.extractFilename
     if fileName.toLowerAscii == "index.gemini" or
        fileName.toLowerAscii == "index.gmi":
       return fileResponse(file)
     
-    result.bodyStream.write link(resPath / fileName) & ' ' & fileName
+    result.body.add link(resPath / fileName) & ' ' & fileName
     case kind:
-    of pcFile: result.bodyStream.write " [FILE]"
-    of pcDir: result.bodyStream.write " [DIR]"
-    of pcLinkToFile, pcLinkToDir: result.bodyStream.write " [SYMLINK]"
-    result.bodyStream.write "\n"
+    of pcFile: result.body.add " [FILE]"
+    of pcDir: result.body.add " [DIR]"
+    of pcLinkToFile, pcLinkToDir: result.body.add " [SYMLINK]"
+    result.body.add "\n"
 
 proc parseRequest(line: string): Future[Response] {.async.} =
   let res = parseUri(line)
@@ -152,11 +150,14 @@ proc handle(client: AsyncSocket) {.async.} =
     try:
       let resp = await parseRequest(line)
       await client.send($resp.code & ' ' & resp.meta & "\r\n")
+      
       if resp.code == StatusSuccess:
-        resp.bodyStream.setPosition(0)
-        while not resp.bodyStream.atEnd():
-          await client.send resp.bodyStream.readStr(4096)
-        resp.bodyStream.close()
+        if isNil resp.fileStream:
+          await client.send resp.body
+        else:
+          while not resp.fileStream.atEnd():
+            await client.send resp.fileStream.readStr(4096)
+          resp.fileStream.close()
     except:
       await client.send("40 INTERNAL ERROR\r\n")
       echo getCurrentExceptionMsg()
