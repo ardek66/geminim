@@ -36,6 +36,11 @@ proc SSL_CTX_set_session_id_context(ctx: SslCtx, id: string, idLen: int) {.impor
 proc sslSetSessionIdContext(ctx: SslContext, id: string = "") =
   SSL_CTX_set_session_id_context(ctx.context, id, id.len)
 
+template fileResponse(path: string): Response =
+  Response(code: StatusSuccess,
+           bodyStream: newFileStream(path),
+           meta: m.getMimetype(toLowerAscii(path.splitFile.ext)))
+      
 proc isVirtDir(path, virtDir: string): bool =
   virtDir.len > 0 and
   path.extractFilename.len > 0 and
@@ -74,17 +79,7 @@ proc serveScript(res: Uri, vhost: VHost): Future[Response] {.async.} =
     return Response(code: StatusError, meta: script & " FAILED WITH QUERY " & query)
 
   return Response(code: StatusSuccess, meta: "text/gemini",
-                                bodyStream: newStringStream(body))
-
-proc serveFile(path: string): Future[Response] {.async.} =
-  result.code = StatusSuccess
-  result.bodyStream = newFileStream(path)
-
-  if result.bodyStream.atEnd:
-    result.meta = "text/gemini"
-    result.bodyStream = newStringStream("##<Empty File>")
-  else:
-    result.meta = m.getMimetype(path.splitFile.ext.toLowerAscii)
+                  bodyStream: newStringStream(body))
 
 proc serveDir(path, resPath: string): Future[Response] {.async.} =
   template link(path: string): string =
@@ -107,7 +102,7 @@ proc serveDir(path, resPath: string): Future[Response] {.async.} =
     let fileName = file.extractFilename
     if fileName.toLowerAscii == "index.gemini" or
        fileName.toLowerAscii == "index.gmi":
-      return await serveFile(file)
+      return fileResponse(file)
     
     result.bodyStream.write link(resPath / fileName) & ' ' & fileName
     case kind:
@@ -141,13 +136,13 @@ proc parseRequest(line: string): Future[Response] {.async.} =
     if not filePath.startsWith(rootDir):
       filePath = vhost.rootDir
       resPath = "/"
-    
-    if res.path.isVirtDir(settings.cgi.virtDir):
-      return await serveScript(res, vhost)
-    elif fileExists(filePath):
-      return await serveFile(filePath)
+
+    if fileExists(filePath):
+      return fileResponse(filePath)
     elif dirExists(filePath):
       return await serveDir(filePath, resPath)
+    elif res.path.isVirtDir(settings.cgi.virtDir):
+      return await serveScript(res, vhost)
     else:
       return Response(code: StatusNotFound, meta: "'" & res.path & "' NOT FOUND")
 
@@ -162,7 +157,7 @@ proc handle(client: AsyncSocket) {.async.} =
       let resp = await parseRequest(line)
       await client.send($resp.code & ' ' & resp.meta & "\r\n")
       if resp.code == StatusSuccess:
-        result.bodyStream.setPosition(0)
+        resp.bodyStream.setPosition(0)
         while not resp.bodyStream.atEnd():
           await client.send resp.bodyStream.readStr(4096)
         resp.bodyStream.close()
