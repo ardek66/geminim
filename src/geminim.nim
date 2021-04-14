@@ -173,7 +173,7 @@ proc serve() {.async.} =
   server.bindAddr(Port(settings.port))
   server.listen()
   ctx.wrapSocket(server)
-  ctx.sslSetSessionIdContext(id = certMD5)
+  ctx.sessionIdContext = certMD5
   
   var client: AsyncSocket
   while true:
