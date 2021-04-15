@@ -4,9 +4,11 @@ import net, streams, asyncnet, asyncdispatch,
 
 import config
 
-const
+type RespStatus = enum
+  StatusNull
   StatusInputRequired = 10
-  StatusSuccess = 20
+  StatusSuccessFile = 20
+  StatusSuccessOther = 21
   StatusRedirect = 30
   StatusTempError = 40
   StatusError = 50
@@ -18,9 +20,13 @@ type VHost = tuple
   hostname, rootDir: string
 
 type Response = object
-  code: int
-  meta, body: string
-  fileStream: FileStream
+  meta: string
+  case code: RespStatus
+  of StatusSuccessFile:
+    fileStream: FileStream
+  of StatusSuccessOther:
+    body: string
+  else: discard
 
 var settings: Settings
 
@@ -32,7 +38,7 @@ m.register(ext = "gmi", mimetype = "text/gemini")
 
 
 template fileResponse(path: string): Response =
-  Response(code: StatusSuccess,
+  Response(code: StatusSuccessFile,
            fileStream: newFileStream(path),
            meta: m.getMimetype(toLowerAscii(path.splitFile.ext)))
       
@@ -73,14 +79,13 @@ proc serveScript(res: Uri, vhost: VHost): Future[Response] {.async.} =
   if outp != 0:
     return Response(code: StatusError, meta: script & " FAILED WITH QUERY " & query)
 
-  return Response(code: StatusSuccess, meta: "text/gemini", body: body)
+  return Response(code: StatusSuccessOther, meta: "text/gemini", body: body)
 
 proc serveDir(path, resPath: string): Future[Response] {.async.} =
   template link(path: string): string =
     "=> " / path
-  
-  result.code = StatusSuccess
-  result.meta = "text/gemini"
+
+  result = Response(code: StatusSuccessOther, meta: "text/gemini")
   
   let headerPath = path / settings.dirHeader
   if fileExists(headerPath):
@@ -148,15 +153,17 @@ proc handle(client: AsyncSocket) {.async.} =
     echo line
     try:
       let resp = await parseRequest(line)
-      await client.send($resp.code & ' ' & resp.meta & "\r\n")
-      
-      if resp.code == StatusSuccess:
-        if isNil resp.fileStream:
-          await client.send resp.body
-        else:
-          while not resp.fileStream.atEnd():
-            await client.send resp.fileStream.readStr(4096)
-          resp.fileStream.close()
+      await client.send($ord(resp.code) & ' ' & resp.meta & "\r\n")
+
+      case resp.code
+      of StatusSuccessFile:
+        while not resp.fileStream.atEnd:
+          await client.send resp.fileStream.readStr(4096)
+        resp.fileStream.close()
+      of StatusSuccessOther:
+        await client.send resp.body
+      else: discard
+    
     except:
       await client.send("40 INTERNAL ERROR\r\n")
       echo getCurrentExceptionMsg()
