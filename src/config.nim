@@ -1,66 +1,107 @@
-import parsecfg, strutils, strtabs, os, streams
+import parsecfg, strutils, tables, os, streams
+export tables
 
-type CgiConf = tuple
-  dir, virtDir: string
+type
+  ZoneType* = enum
+    ZoneNull
+    ZoneRedirect
+    ZoneRedirectPerm
+    ZoneCGI
+    ZoneInputCGI
 
-type Settings* = object
-  port*: int
-  certFile*, keyFile*: string
-  vhosts*: StringTableRef
-  redirects*: StringTableRef
-  homeDir*: string
-  dirHeader*: string
-  cgi*: CgiConf
+  Zone* = tuple
+    key, val: string
+    ztype: ZoneType
+
+  VHost = object
+    rootDir*: string
+    zones*: seq[Zone]
+  
+  Settings* = object
+    port*: int
+    certFile*, keyFile*: string
+    vhosts*: Table[string, VHost]
+    homeDir*: string
+    dirHeader*: string
 
 const defaultHome =
   when defined(posix): "/home/$#/"
   else: "C:\\Users\\$#\\"
+
+proc insertSort(a: var seq[Zone], x: Zone) =
+  a.setLen(a.len + 1)
+  var i = a.high
+  
+  while i > 0 and a[i-1].key > x.key:
+    a[i] = a[i-1]
+    dec i
+    
+  a[i] = x
+
+proc findZone*(a: VHost, p: string): Zone =
+  var
+    i = a.zones.low
+    j = a.zones.high
+
+  if j == 0:
+    if p.isRelativeTo a.zones[0].key: return a.zones[0]
+  else:
+    while i <= j:
+      let m = (i+j) div 2
+      if p.isRelativeTo a.zones[m].key: return a.zones[m]
+      elif p < a.zones[m].key: j = m-1
+      else: i = m+1
 
 proc readSettings*(path: string): Settings =
   result = Settings(
     port: 1965,
     certFile: "mycert.pem",
     keyFile: "mykey.pem",
-    vhosts: newStringTable(modeCaseSensitive),
-    redirects: newStringTable(modeCaseSensitive),
     homeDir: defaultHome,
-    dirHeader: "header.gemini",
-    cgi: (dir: "cgi/", virtDir: ""))
+    dirHeader: "header.gemini")
 
   var f = newFilestream(path, fmRead)
   if f != nil:
     var p: CfgParser
     p.open(f, path)
 
-    var section: string
+    var
+      section: string
+      keyval: seq[string]
     while true:
       var e = next(p)
       case e.kind
       of cfgEof: break
       of cfgError: echo e.msg
-      of cfgSectionStart: section = e.section
+      of cfgSectionStart:
+        section = e.section
+        keyval = section.split('/', 1)
       of cfgKeyValuePair:
-        case section.toLowerAscii
-        of "":
+        if section.len == 0:
           case e.key.toLowerAscii
           of "port": result.port = e.value.parseInt
           of "certfile": result.certfile = e.value
           of "keyfile": result.keyfile = e.value
           of "homedir": result.homeDir = e.value
           of "dirheader": result.dirHeader = e.value
-        of "vhosts":
-          if dirExists(e.value):
-            result.vhosts[e.key] = e.value
-          else:
-            echo e.value & " does not exist or is not a directory"
-            echo "Not adding " & e.key & " to hosts\n"
-        of "redirects":
-          result.redirects[e.key] = e.value
-        of "cgi":
-          case e.key.toLowerAscii
-          of "dir":
-            if dirExists(e.value): result.cgi.dir = e.value
-            else: echo "CGI directory " & e.value & " does not exist\n"
-          of "virtdir": result.cgi.virtDir = e.value
+        else:
+          if keyval.len == 1 and e.key == "rootDir":
+            if dirExists(e.value):
+              result.vhosts[keyval[0]] = VHost(rootDir: e.value)
+            else:
+              echo e.value & " does not exist or is not a directory"
+              echo "Not adding " & e.key & " to hosts\n"
+          elif result.vhosts.hasKey(keyval[0]):
+            let zoneType =
+              case keyval[1]
+              of "redirectZones": ZoneRedirect
+              of "permRedirectZones": ZoneRedirectPerm
+              of "cgiZones": ZoneCGI
+              of "inputCgiZones": ZoneInputCGI
+              else: ZoneNull
 
+            if zoneType == ZoneNull:
+              echo "Option " & keyval[1] & " does not exist."
+            else:
+              result.vhosts[keyval[0]].zones.insertSort (e.key, e.value, zoneType)
       else: discard

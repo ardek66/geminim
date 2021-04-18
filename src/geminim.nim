@@ -1,5 +1,5 @@
 import net, streams, asyncnet, asyncdispatch,
-       uri, mimetypes, strutils, strtabs,
+       uri, mimetypes, strutils,
        os, osproc, md5
 
 import config
@@ -10,6 +10,7 @@ type RespStatus = enum
   StatusSuccessFile = 20
   StatusSuccessOther = 21
   StatusRedirect = 30
+  StatusRedirectPerm = 31
   StatusTempError = 40
   StatusError = 50
   StatusNotFound = 51
@@ -55,29 +56,30 @@ proc getUserDir(path: string): (string, string) =
 
   result = (path[2..<i], path[i..^1])
 
-proc serveScript(res: Uri, vhost: VHost): Future[Response] {.async.} =
-  let
-    query = res.query
-    script = res.path.extractFilename
-    scriptFile = settings.cgi.dir / script
+proc serveScript(res: Uri, zone: Zone, query = ""): Future[Response] {.async.} =
+  let script = res.path.lastPathPart
 
+  if script == zone.key[1..^1]:
+    return Response(code: StatusError, meta: "ATTEMPTING TO ACCESS CGI DIR.")
+  
+  let scriptFile = zone.val / script
+
+  
   if not fileExists(scriptFile):
     return Response(code: StatusNotFound, meta: "CGI SCRIPT " & script & " NOT FOUND.")
-  
-  if query.len < 1:
-    return Response(code: StatusInputRequired, meta: "ENTER INPUT ")
 
   putEnv("SCRIPT_NAME", script)
   putEnv("SCRIPT_FILENAME", scriptFile)
-  putEnv("DOCUMENT_ROOT", vhost.rootDir)
-  putEnv("SERVER_NAME", vhost.hostname)
+  putEnv("SERVER_NAME", res.hostname)
   putEnv("SERVER_PORT", $settings.port)
   putEnv("QUERY_STRING", query)
   
   let (body, outp) = execCmdEx(scriptFile)
   
   if outp != 0:
-    return Response(code: StatusError, meta: script & " FAILED WITH QUERY " & query)
+    var errorMsg = script & " FAILED"
+    if query.len > 0: errorMsg.add " WITH QUERY: '" & query & '\''
+    return Response(code: StatusError, meta: errorMsg & '.')
 
   return Response(code: StatusSuccessOther, meta: "text/gemini", body: body)
 
@@ -112,40 +114,48 @@ proc serveDir(path, resPath: string): Future[Response] {.async.} =
 proc parseRequest(line: string): Future[Response] {.async.} =
   let res = parseUri(line)
   
-  if line.len > 1024 or res.scheme != "gemini" or res.hostname.len == 0:
+  if line.len > 1024 or res.hostname.len * res.scheme.len == 0:
     return Response(code: StatusMalformedRequest, meta: "MALFORMED REQUEST")
+
+  if res.hostname notin settings.vhosts or res.scheme != "gemini":
+    return Response(code: StatusProxyRefused, meta: "PROXY REFUSED")
   
-  if settings.redirects.hasKey(res.hostname):
-    return Response(code: StatusRedirect, meta: settings.redirects[res.hostname])
-    
-  elif settings.vhosts.hasKey(res.hostname):
-    let vhost = (hostname: res.hostname,
-                 rootDir: settings.vhosts[res.hostname])
-    var
-      rootDir = vhost.rootDir
-      filePath = rootDir / res.path
+  let vhost = (hostname: res.hostname, rootDir: settings.vhosts[res.hostname].rootDir)
+  
+  var
+    rootDir = vhost.rootDir
+    filePath = rootDir / res.path
       
-    if res.path.startsWith("/~"):
-      let (user, newPath) = res.path.getUserDir
-      rootDir = settings.homeDir % [user] / vhost.hostname
-      filePath = rootDir / newPath
+  if res.path.startsWith("/~"):
+    let (user, newPath) = res.path.getUserDir
+    rootDir = settings.homeDir % [user] / vhost.hostname
+    filePath = rootDir / newPath
 
-    var resPath = res.path
-    if not filePath.startsWith(rootDir):
-      filePath = vhost.rootDir
-      resPath = "/"
+  var resPath = res.path
+  if not filePath.startsWith(rootDir):
+    filePath = vhost.rootDir
+    resPath = "/"
 
+  let zone = settings.vhosts[res.hostname].findZone(resPath)
+  case zone.ztype
+  of ZoneRedirect:
+    return Response(code: StatusRedirect, meta: zone.val)
+  of ZoneRedirectPerm:
+    return Response(code: StatusRedirectPerm, meta: zone.val)
+  of ZoneCgi:
+    return await res.serveScript(zone)
+  of ZoneInputCgi:
+    if res.query.len == 0:
+       return Response(code: StatusInputRequired, meta: "ENTER INPUT")
+    return await res.serveScript(zone, res.query)
+  
+  else:
     if fileExists(filePath):
       return fileResponse(filePath)
     elif dirExists(filePath):
       return await serveDir(filePath, resPath)
-    elif res.path.isVirtDir(settings.cgi.virtDir):
-      return await serveScript(res, vhost)
     else:
       return Response(code: StatusNotFound, meta: "'" & res.path & "' NOT FOUND")
-
-  else:
-    return Response(code: StatusProxyRefused, meta: "PROXY REFUSED")
 
 proc handle(client: AsyncSocket) {.async.} =
   let line = await client.recvLine()
