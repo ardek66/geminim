@@ -39,13 +39,15 @@ proc insertSort(a: var seq[Zone], x: Zone) =
   a[i] = x
 
 proc findZone*(a: VHost, p: string): Zone =
-  var
-    i = a.zones.low
-    j = a.zones.high
-
-  if j == 0:
+  case a.zones.len
+  of 0: return
+  of 1:
     if p.isRelativeTo a.zones[0].key: return a.zones[0]
   else:
+    var
+      i = a.zones.low
+      j = a.zones.high
+    
     while i <= j:
       let
         m = (i+j) div 2
