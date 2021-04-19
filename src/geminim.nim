@@ -57,18 +57,17 @@ proc getUserDir(path: string): (string, string) =
   result = (path[2..<i], path[i..^1])
 
 proc serveScript(res: Uri, zone: Zone, query = ""): Future[Response] {.async.} =
-  let script = res.path.lastPathPart
+  let script = res.path.relativePath(zone.key)
 
-  if script == zone.key[1..^1]:
+  if script == ".":
     return Response(code: StatusError, meta: "ATTEMPTING TO ACCESS CGI DIR.")
   
   let scriptFile = zone.val / script
 
-  
   if not fileExists(scriptFile):
     return Response(code: StatusNotFound, meta: "CGI SCRIPT " & script & " NOT FOUND.")
 
-  putEnv("SCRIPT_NAME", script)
+  putEnv("SCRIPT_NAME", script.extractFilename)
   putEnv("SCRIPT_FILENAME", scriptFile)
   putEnv("SERVER_NAME", res.hostname)
   putEnv("SERVER_PORT", $settings.port)
