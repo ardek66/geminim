@@ -9,9 +9,10 @@ type
     ZoneCGI
     ZoneInputCGI
 
-  Zone* = tuple
-    key, val: string
-    ztype: ZoneType
+  Zone* = object
+    parentIdx: int
+    key*, val*: string
+    ztype*: ZoneType
 
   VHost = object
     rootDir*: string
@@ -37,6 +38,16 @@ proc insertSort(a: var seq[Zone], x: Zone) =
     dec i
     
   a[i] = x
+  a[i].parentIdx = -1
+  
+  var j = i - 1
+  while j > -1:
+    if a[i].key.isRelativeTo a[j].key:
+      a[i].parentIdx = if a[j].parentIdx < 0: j
+                       else: a[j].parentIdx
+      break
+    else:
+      j = a[j].parentIdx
 
 proc findZone*(a: VHost, p: string): Zone =
   case a.zones.len
@@ -45,21 +56,23 @@ proc findZone*(a: VHost, p: string): Zone =
     if p.isRelativeTo a.zones[0].key: return a.zones[0]
   else:
     var
-      i = a.zones.low
+      i = 0
       j = a.zones.high
+      m: int
     
     while i <= j:
-      let
-        m = (i+j) div 2
-        res = cmp(p, a.zones[m].key)
-
-      if res < 0: j = m-1
-      elif res > 0: i = m+1
+      m = (i+j) div 2
+      
+      let res = cmp(p, a.zones[m].key)
+      if res > 0: i = m+1
+      elif res < 0: j = m-1
       else: return a.zones[m]
-  
+
+    while m > -1:
       if p.isRelativeTo a.zones[m].key:
-        if result.key.len < a.zones[m].key.len:
-          result = a.zones[m]
+        return a.zones[m]
+
+      m = a.zones[m].parentIdx
 
 proc readSettings*(path: string): Settings =
   result = Settings(
@@ -112,5 +125,8 @@ proc readSettings*(path: string): Settings =
             if zoneType == ZoneNull:
               echo "Option " & keyval[1] & " does not exist."
             else:
-              result.vhosts[keyval[0]].zones.insertSort (e.key, e.value, zoneType)
+              result.vhosts[keyval[0]].zones.insertSort
+                Zone(key: e.key,
+                     val: e.value,
+                     ztype: zoneType)
       else: discard
