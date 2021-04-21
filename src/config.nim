@@ -125,8 +125,7 @@ proc readSettings*(path: string): Settings =
             if zoneType == ZoneNull:
               echo "Option " & keyval[1] & " does not exist."
             else:
-              result.vhosts[keyval[0]].zones.insertSort
-                Zone(key: e.key,
-                     val: e.value,
-                     ztype: zoneType)
+              result.vhosts[keyval[0]].zones.insertSort Zone(key: e.key,
+                                                             val: e.value,
+                                                             ztype: zoneType)
       else: discard
