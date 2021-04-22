@@ -74,7 +74,6 @@ proc findZone*(a: VHost, p: string): Zone =
     
     dec i
     while i > -1:
-      echo a.zones[i]
       if p.isRelativeTo a.zones[i].key:
         return a.zones[i]
 
