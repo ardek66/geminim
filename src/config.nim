@@ -71,13 +71,14 @@ proc findZone*(a: VHost, p: string): Zone =
       if p.isRelativeTo a.zones[0].key:
         result = a.zones[0]
       return
-    
-    dec i
-    while i > -1:
-      if p.isRelativeTo a.zones[i].key:
-        return a.zones[i]
 
-      i = a.zones[i].parentIdx
+    if p.isRelativeTo a.zones[i-1].key:
+      return a.zones[i-1]
+    else:
+      let parentIdx = a.zones[i-1].parentIdx
+      if parentIdx > -1:
+        if p.isRelativeTo a.zones[parentIdx].key:
+          return a.zones[parentIdx]
 
 proc readSettings*(path: string): Settings =
   result = Settings(
