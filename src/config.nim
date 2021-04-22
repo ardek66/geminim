@@ -57,22 +57,28 @@ proc findZone*(a: VHost, p: string): Zone =
   else:
     var
       i = 0
-      j = a.zones.high
-      m: int
+      j = a.zones.len
     
-    while i <= j:
-      m = (i+j) div 2
-      
-      let res = cmp(p, a.zones[m].key)
-      if res > 0: i = m+1
-      elif res < 0: j = m-1
+    while i < j:
+      let
+        m = (i+j) div 2
+        res = cmp(p, a.zones[m].key)
+      if res > 0: i = m + 1
+      elif res < 0: j = m
       else: return a.zones[m]
 
-    while m > -1:
-      if p.isRelativeTo a.zones[m].key:
-        return a.zones[m]
+    if i < 1:
+      if p.isRelativeTo a.zones[0].key:
+        result = a.zones[0]
+      return
+    
+    dec i
+    while i > -1:
+      echo a.zones[i]
+      if p.isRelativeTo a.zones[i].key:
+        return a.zones[i]
 
-      m = a.zones[m].parentIdx
+      i = a.zones[i].parentIdx
 
 proc readSettings*(path: string): Settings =
   result = Settings(
