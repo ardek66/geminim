@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.1.2"
+version       = "0.1.4"
 author        = "IDF"
 description   = "A simple gemini server written in nim"
 license       = "BSD2"
@@ -10,4 +10,4 @@ bin           = @["geminim"]
 
 # Dependencies
 
-requires "nim >= 1.2.6"
+requires "nim >= 1.4.0"
