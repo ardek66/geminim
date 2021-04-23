@@ -188,16 +188,15 @@ proc serve() {.async.} =
   server.setSockOpt(OptReusePort, true)
   server.bindAddr(Port(settings.port))
   server.listen()
+
   ctx.wrapSocket(server)
   ctx.sessionIdContext = certMD5
   
-  var client: AsyncSocket
   while true:
     try:
-      client = await server.accept()
+      let client = await server.accept()
       ctx.wrapConnectedSocket(client, handshakeAsServer)
       await client.handle()
-      client.close()
     except:
       echo getCurrentExceptionMsg()
 

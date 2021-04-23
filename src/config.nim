@@ -39,15 +39,14 @@ proc insertSort(a: var seq[Zone], x: Zone) =
     
   a[i] = x
   a[i].parentIdx = -1
-  
-  var j = i - 1
-  while j > -1:
-    if a[i].key.isRelativeTo a[j].key:
-      a[i].parentIdx = if a[j].parentIdx < 0: j
-                       else: a[j].parentIdx
-      break
+  if i > 0:
+    if x.key.isRelativeTo a[i-1].key:
+      a[i].parentIdx = i - 1
     else:
-      j = a[j].parentIdx
+      let parentIdx = a[i-1].parentIdx
+      if parentIdx > -1:
+        if x.key.isRelativeTo a[parentIdx].key:
+          a[i].parentIdx = parentIdx
 
 proc findZone*(a: VHost, p: string): Zone =
   case a.zones.len
@@ -69,12 +68,12 @@ proc findZone*(a: VHost, p: string): Zone =
 
     if i < 1:
       if p.isRelativeTo a.zones[0].key:
-        result = a.zones[0]
-      return
+        return a.zones[0]
 
-    if p.isRelativeTo a.zones[i-1].key:
-      return a.zones[i-1]
     else:
+      if p.isRelativeTo a.zones[i-1].key:
+        return a.zones[i-1]
+
       let parentIdx = a.zones[i-1].parentIdx
       if parentIdx > -1:
         if p.isRelativeTo a.zones[parentIdx].key:
