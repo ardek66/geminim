@@ -108,11 +108,13 @@ proc parseRequest(line: string): Future[Response] {.async.} =
   if line.len > 1024 or res.hostname.len * res.scheme.len == 0:
     return Response(code: StatusMalformedRequest, meta: "MALFORMED REQUEST")
 
-  if res.hostname notin settings.vhosts or res.scheme != "gemini":
+  let vhostRoot = settings.rootDir / res.hostname
+  
+  if not dirExists(vhostRoot) or res.scheme != "gemini":
     return Response(code: StatusProxyRefused, meta: "PROXY REFUSED")
   
   var
-    rootDir = settings.rootDir / res.hostname
+    rootDir = vhostRoot
     filePath = rootDir / res.path
       
   if res.path.startsWith("/~"):
@@ -122,7 +124,7 @@ proc parseRequest(line: string): Future[Response] {.async.} =
 
   var resPath = res.path
   if not filePath.startsWith rootDir:
-    filePath = settings.rootDir / res.hostname
+    filePath = vhostRoot
     resPath = "/"
 
   let zone = settings.vhosts[res.hostname].findZone(resPath)
