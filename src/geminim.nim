@@ -127,26 +127,27 @@ proc parseRequest(line: string): Future[Response] {.async.} =
     filePath = vhostRoot
     resPath = "/"
 
-  let zone = settings.vhosts[res.hostname].findZone(resPath)
-  case zone.ztype
-  of ZoneRedirect:
-    return Response(code: StatusRedirect, meta: zone.val)
-  of ZoneRedirectPerm:
-    return Response(code: StatusRedirectPerm, meta: zone.val)
-  of ZoneCgi:
-    return await res.serveScript(zone)
-  of ZoneInputCgi:
-    if res.query.len == 0:
-       return Response(code: StatusInputRequired, meta: "ENTER INPUT")
-    return await res.serveScript(zone, res.query)
-  
+  if settings.vhosts.hasKey res.hostname:
+    let zone = settings.vhosts[res.hostname].findZone(resPath)
+    case zone.ztype
+    of ZoneRedirect:
+      return Response(code: StatusRedirect, meta: zone.val)
+    of ZoneRedirectPerm:
+      return Response(code: StatusRedirectPerm, meta: zone.val)
+    of ZoneCgi:
+      return await res.serveScript(zone)
+    of ZoneInputCgi:
+      if res.query.len == 0:
+        return Response(code: StatusInputRequired, meta: "ENTER INPUT")
+      return await res.serveScript(zone, res.query)
+    else: discard
+
+  if fileExists(filePath):
+    return fileResponse(filePath)
+  elif dirExists(filePath):
+    return await serveDir(filePath, resPath)
   else:
-    if fileExists(filePath):
-      return fileResponse(filePath)
-    elif dirExists(filePath):
-      return await serveDir(filePath, resPath)
-    else:
-      return Response(code: StatusNotFound, meta: "'" & res.path & "' NOT FOUND")
+    return Response(code: StatusNotFound, meta: "'" & res.path & "' NOT FOUND")
 
 proc handle(client: AsyncSocket) {.async.} =
   let line = await client.recvLine()
