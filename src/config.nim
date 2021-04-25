@@ -15,10 +15,10 @@ type
     ztype*: ZoneType
 
   VHost = object
-    rootDir*: string
     zones*: seq[Zone]
   
   Settings* = object
+    rootDir*: string
     port*: int
     certFile*, keyFile*: string
     vhosts*: Table[string, VHost]
@@ -81,6 +81,7 @@ proc findZone*(a: VHost, p: string): Zone =
 
 proc readSettings*(path: string): Settings =
   result = Settings(
+    rootDir: "pub/",
     port: 1965,
     certFile: "mycert.pem",
     keyFile: "mykey.pem",
@@ -106,31 +107,27 @@ proc readSettings*(path: string): Settings =
       of cfgKeyValuePair:
         if section.len == 0:
           case e.key.toLowerAscii
+          of "rootdir": result.rootDir = e.value
           of "port": result.port = e.value.parseInt
           of "certfile": result.certfile = e.value
           of "keyfile": result.keyfile = e.value
           of "homedir": result.homeDir = e.value
           of "dirheader": result.dirHeader = e.value
         else:
-          if keyval.len == 1 and e.key == "rootDir":
-            if dirExists(e.value):
-              result.vhosts[keyval[0]] = VHost(rootDir: e.value)
-            else:
-              echo e.value & " does not exist or is not a directory"
-              echo "Not adding " & e.key & " to hosts\n"
-          elif result.vhosts.hasKey(keyval[0]):
-            let zoneType =
-              case keyval[1]
-              of "redirectZones": ZoneRedirect
-              of "permRedirectZones": ZoneRedirectPerm
-              of "cgiZones": ZoneCGI
-              of "inputCgiZones": ZoneInputCGI
-              else: ZoneNull
+          let zoneType =
+            case keyval[1]
+            of "redirectZones": ZoneRedirect
+            of "permRedirectZones": ZoneRedirectPerm
+            of "cgiZones": ZoneCGI
+            of "inputCgiZones": ZoneInputCGI
+            else: ZoneNull
 
-            if zoneType == ZoneNull:
-              echo "Option " & keyval[1] & " does not exist."
-            else:
-              result.vhosts[keyval[0]].zones.insertSort Zone(key: e.key,
-                                                             val: e.value,
-                                                             ztype: zoneType)
+          if zoneType == ZoneNull:
+            echo "Option " & keyval[1] & " does not exist."
+          else:
+            let zone = Zone(key: e.key, val: e.value, ztype: zoneType, parentIdx: -1)
+            if result.vhosts.hasKeyOrPut(keyval[0], VHost(zones: @[zone])):
+              result.vhosts[keyval[0]].zones.insertSort zone
       else: discard
+      
+    p.close()

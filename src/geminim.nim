@@ -16,9 +16,6 @@ type RespStatus = enum
   StatusNotFound = 51
   StatusProxyRefused = 53
   StatusMalformedRequest = 59
-  
-type VHost = tuple
-  hostname, rootDir: string
 
 type Response = object
   meta: string
@@ -42,11 +39,6 @@ template fileResponse(path: string): Response =
   Response(code: StatusSuccessFile,
            fileStream: newFileStream(path),
            meta: m.getMimetype(toLowerAscii(path.splitFile.ext)))
-      
-proc isVirtDir(path, virtDir: string): bool =
-  virtDir.len > 0 and
-  path.extractFilename.len > 0 and
-  path.parentDir == virtDir
 
 proc getUserDir(path: string): (string, string) =
   var i = 2
@@ -119,20 +111,18 @@ proc parseRequest(line: string): Future[Response] {.async.} =
   if res.hostname notin settings.vhosts or res.scheme != "gemini":
     return Response(code: StatusProxyRefused, meta: "PROXY REFUSED")
   
-  let vhost = (hostname: res.hostname, rootDir: settings.vhosts[res.hostname].rootDir)
-  
   var
-    rootDir = vhost.rootDir
+    rootDir = settings.rootDir / res.hostname
     filePath = rootDir / res.path
       
   if res.path.startsWith("/~"):
     let (user, newPath) = res.path.getUserDir
-    rootDir = settings.homeDir % [user] / vhost.hostname
+    rootDir = settings.homeDir % [user] / res.hostname
     filePath = rootDir / newPath
 
   var resPath = res.path
-  if not filePath.startsWith(rootDir):
-    filePath = vhost.rootDir
+  if not filePath.startsWith rootDir:
+    filePath = settings.rootDir / res.hostname
     resPath = "/"
 
   let zone = settings.vhosts[res.hostname].findZone(resPath)
