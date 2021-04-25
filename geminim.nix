@@ -12,6 +12,6 @@ stdenv.mkDerivation rec {
 
   nativeBuildInputs = [ openssl nim ];
 
-  buildPhase = "HOME=$NIX_BUILD_TOP nim c -d:release --gc:orc src/geminim.nim";
+  buildPhase = "HOME=$NIX_BUILD_TOP nim c -d:release --gc:orc -d:useMalloc src/geminim.nim";
   installPhase = "install -Dt $out/bin src/geminim";
 }
