@@ -1,7 +1,10 @@
 * GemiNim
 
 GemiNim is a simple Nim server for the [[https://gemini.circumlunar.space/][Gemini]] protocol.
+
 [[gemini://gemi.nim.town]]
+
+
 [[https://gemi.nim.town]]
 
 ** Features
