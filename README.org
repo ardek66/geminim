@@ -25,3 +25,7 @@ I also provide a Nix package. To get into the build shell environment, just run:
 #+BEGIN_EXAMPLE
 nix-shell
 #+END_EXAMPLE
+
+** Todo
++ Reverse proxying
++ Client certificate authentication(almost there)
