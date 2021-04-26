@@ -1,0 +1,24 @@
+* GemiNim
+
+GemiNim is a simple Nim server for the [[https://gemini.circumlunar.space/][Gemini]] protocol.
+[[gemini://gemi.nim.town]]
+[[https://gemi.nim.town]]
+
+** Features
++ Fast
++ Simple
++ Domain-based vhosting
++ CGI
++ Per-user directories
++ Directory listing
+
+** Developing
+You can build GemiNim by running:
+#+BEGIN_EXAMPLE
+nimble build
+#+END_EXAMPLE
+
+I also provide a Nix package. To get into the build shell environment, just run:
+#+BEGIN_EXAMPLE
+nix-shell
+#+END_EXAMPLE
