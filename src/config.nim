@@ -35,16 +35,18 @@ proc insertSort(a: var seq[Zone], x: Zone) =
   
   while i > 0 and a[i-1].key > x.key:
     a[i] = a[i-1]
+    inc a[i].parentIdx
     dec i
-    
+
   a[i] = x
-  a[i].parentIdx = -1
+  a[i].parentIdx = i
+  
   if i > 0:
     if x.key.isRelativeTo a[i-1].key:
-      a[i].parentIdx = i - 1
+      a[i].parentIdx = i-1
     else:
       let parentIdx = a[i-1].parentIdx
-      if parentIdx > -1:
+      if parentIdx != a[parentIdx].parentIdx:
         if x.key.isRelativeTo a[parentIdx].key:
           a[i].parentIdx = parentIdx
 
@@ -69,15 +71,10 @@ proc findZone*(a: VHost, p: string): Zone =
     if i < 1:
       if p.isRelativeTo a.zones[0].key:
         return a.zones[0]
-
     else:
-      if p.isRelativeTo a.zones[i-1].key:
-        return a.zones[i-1]
-
       let parentIdx = a.zones[i-1].parentIdx
-      if parentIdx > -1:
-        if p.isRelativeTo a.zones[parentIdx].key:
-          return a.zones[parentIdx]
+      if p.isRelativeTo a.zones[parentIdx].key:
+        return a.zones[parentIdx]
 
 proc readSettings*(path: string): Settings =
   result = Settings(
@@ -125,9 +122,10 @@ proc readSettings*(path: string): Settings =
           if zoneType == ZoneNull:
             echo "Option " & keyval[1] & " does not exist."
           else:
-            let zone = Zone(key: e.key, val: e.value, ztype: zoneType, parentIdx: -1)
+            let zone = Zone(key: e.key, val: e.value, ztype: zoneType, parentIdx: 0)
             if result.vhosts.hasKeyOrPut(keyval[0], VHost(zones: @[zone])):
               result.vhosts[keyval[0]].zones.insertSort zone
       else: discard
       
     p.close()
+    echo result.vhosts
