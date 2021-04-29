@@ -10,12 +10,15 @@ type
     ZoneInputCGI
 
   Zone* = object
-    parentIdx: int
     key*, val*: string
     ztype*: ZoneType
 
+  ZoneBuckets* = object
+    mins*, maxs*: seq[int]
+  
   VHost = object
     zones*: seq[Zone]
+    zoneBuckets*: ZoneBuckets
   
   Settings* = object
     rootDir*: string
@@ -35,20 +38,42 @@ proc insertSort(a: var seq[Zone], x: Zone) =
   
   while i > 0 and a[i-1].key > x.key:
     a[i] = a[i-1]
-    inc a[i].parentIdx
     dec i
 
   a[i] = x
-  a[i].parentIdx = i
+
+# Learning romanian would be easier than reading the thing below
+proc initZoneParents(v: var Vhost) =
+  v.zoneBuckets.mins.setLen(v.zones.len)
+  v.zoneBuckets.maxs.setLen(v.zones.len)
   
-  if i > 0:
-    if x.key.isRelativeTo a[i-1].key:
-      a[i].parentIdx = i-1
-    else:
-      let parentIdx = a[i-1].parentIdx
-      if parentIdx != a[parentIdx].parentIdx:
-        if x.key.isRelativeTo a[parentIdx].key:
-          a[i].parentIdx = parentIdx
+  var
+    i, j: int
+  
+  while i < v.zones.len:
+    j = i + 1
+    
+    while j < v.zones.len:
+      if v.zones[j].key.isRelativeTo v.zones[i].key:
+        v.zoneBuckets.mins[j] = i
+      else:
+        v.zoneBuckets.mins[j] = j
+        break
+      inc j
+
+    i = j
+
+  for i in 0..v.zones.high:
+    j = i + 1
+    
+    while j < v.zones.len:
+      v.zoneBuckets.maxs[j] = v.zoneBuckets.mins[j]
+      if v.zoneBuckets.mins[j] != v.zoneBuckets.mins[j-1]: break
+      if v.zones[j].key.isRelativeTo v.zones[i].key:
+        v.zoneBuckets.maxs[j] = i
+        
+      inc j
+
 
 proc findZone*(a: VHost, p: string): Zone =
   case a.zones.len
@@ -72,9 +97,16 @@ proc findZone*(a: VHost, p: string): Zone =
       if p.isRelativeTo a.zones[0].key:
         return a.zones[0]
     else:
-      let parentIdx = a.zones[i-1].parentIdx
-      if p.isRelativeTo a.zones[parentIdx].key:
-        return a.zones[parentIdx]
+      var j = i - 1
+      let minIdx = a.zoneBuckets.mins[j]
+      
+      if p.isRelativeTo a.zones[minIdx].key:
+        result = a.zones[minIdx]
+        while j > minIdx:
+          if p.isRelativeTo a.zones[j].key:
+            return a.zones[j]
+          
+          j = a.zoneBuckets.maxs[j]
 
 proc readSettings*(path: string): Settings =
   result = Settings(
@@ -122,10 +154,11 @@ proc readSettings*(path: string): Settings =
           if zoneType == ZoneNull:
             echo "Option " & keyval[1] & " does not exist."
           else:
-            let zone = Zone(key: e.key, val: e.value, ztype: zoneType, parentIdx: 0)
+            let zone = Zone(key: e.key, val: e.value, ztype: zoneType)
             if result.vhosts.hasKeyOrPut(keyval[0], VHost(zones: @[zone])):
               result.vhosts[keyval[0]].zones.insertSort zone
       else: discard
       
     p.close()
-    echo result.vhosts
+    for host in result.vhosts.mvalues:
+      host.initZoneParents()
