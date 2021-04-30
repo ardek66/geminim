@@ -5,7 +5,7 @@ GemiNim is a simple Nim server for the [[https://gemini.circumlunar.space/][Gemi
 [[gemini://gemi.nim.town]]
 
 
-[[https://gemi.nim.town]]
+[[https://gemi.nim.town/index.gemini]]
 
 ** Features
 + Fast

@@ -63,11 +63,11 @@ proc initZoneParents(v: var Vhost) =
 
     i = j
 
+  v.zoneBuckets.maxs = v.zoneBuckets.mins
   for i in 0..v.zones.high:
     j = i + 1
     
     while j < v.zones.len:
-      v.zoneBuckets.maxs[j] = v.zoneBuckets.mins[j]
       if v.zoneBuckets.mins[j] != v.zoneBuckets.mins[j-1]: break
       if v.zones[j].key.isRelativeTo v.zones[i].key:
         v.zoneBuckets.maxs[j] = i
