@@ -163,7 +163,7 @@ proc handle(client: AsyncSocket) {.async.} =
         
         if resp.code == StatusSuccess:
           while not resp.fileStream.atEnd:
-            await client.send resp.fileStream.readStr(4096)
+            await client.send resp.fileStream.readStr(BufferSize)
           resp.fileStream.close()
     
     except:
