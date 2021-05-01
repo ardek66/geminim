@@ -6,26 +6,23 @@ import config
 
 type RespStatus = enum
   StatusNull
-  StatusInputRequired = 10
-  StatusSuccessFile = 20
-  StatusSuccessOther = 21
-  StatusRedirect = 30
-  StatusRedirectPerm = 31
-  StatusTempError = 40
-  StatusError = 50
-  StatusNotFound = 51
-  StatusProxyRefused = 53
-  StatusMalformedRequest = 59
+  StatusInputRequired = "10"
+  StatusSuccess = "20"
+  StatusRedirect = "30"
+  StatusRedirectPerm = "31"
+  StatusTempError = "40"
+  StatusError = "50"
+  StatusNotFound = "51"
+  StatusProxyRefused = "53"
+  StatusMalformedRequest = "59"
 
 type Response = object
   meta: string
   case code: RespStatus
-  of StatusSuccessFile:
+  of StatusSuccess:
     fileStream: FileStream
-  of StatusSuccessOther:
-    body: string
   else: discard
-
+  
 var settings: Settings
 
 var certMD5: string
@@ -34,9 +31,11 @@ var m = newMimeTypes()
 m.register(ext = "gemini", mimetype = "text/gemini")
 m.register(ext = "gmi", mimetype = "text/gemini")
 
+template strResp(code = StatusSuccess, meta = "text/gemini"): string =
+  $code & ' ' & meta & "\r\n"
 
 template fileResponse(path: string): Response =
-  Response(code: StatusSuccessFile,
+  Response(code: StatusSuccess,
            fileStream: newFileStream(path),
            meta: m.getMimetype(toLowerAscii(path.splitFile.ext)))
 
@@ -49,6 +48,8 @@ proc getUserDir(path: string): (string, string) =
   result = (path[2..<i], path[i..^1])
 
 proc serveScript(res: Uri, zone: Zone, query = ""): Future[Response] {.async.} =
+  result.meta = strResp()
+  
   let script = res.path.relativePath(zone.key)
 
   if script == ".":
@@ -72,35 +73,35 @@ proc serveScript(res: Uri, zone: Zone, query = ""): Future[Response] {.async.} =
     if query.len > 0: errorMsg.add " WITH QUERY: '" & query & '\''
     return Response(code: StatusError, meta: errorMsg & '.')
 
-  return Response(code: StatusSuccessOther, meta: "text/gemini", body: body)
+  result.meta.add body
 
 proc serveDir(path, resPath: string): Future[Response] {.async.} =
   template link(path: string): string =
     "=> " / path
 
-  result = Response(code: StatusSuccessOther, meta: "text/gemini")
+  result.meta = strResp()
   
   let headerPath = path / settings.dirHeader
   if fileExists(headerPath):
     let banner = readFile(headerPath)
-    result.body.add banner & "\n"
+    result.meta.add banner & "\n"
   
-  result.body.add "### Index of " & resPath.normalizedPath & "\n"
+  result.meta.add "### Index of " & resPath.normalizedPath & "\n"
   
   if resPath.parentDir != "":
-    result.body.add link(resPath.splitPath.head) & " [..]" & "\n"
+    result.meta.add link(resPath.splitPath.head) & " [..]" & "\n"
   for kind, file in path.walkDir:
     let fileName = file.extractFilename
     if fileName.toLowerAscii == "index.gemini" or
        fileName.toLowerAscii == "index.gmi":
       return fileResponse(file)
     
-    result.body.add link(resPath / fileName) & ' ' & fileName
+    result.meta.add link(resPath / fileName) & ' ' & fileName
     case kind:
-    of pcFile: result.body.add " [FILE]"
-    of pcDir: result.body.add " [DIR]"
-    of pcLinkToFile, pcLinkToDir: result.body.add " [SYMLINK]"
-    result.body.add "\n"
+    of pcFile: result.meta.add " [FILE]"
+    of pcDir: result.meta.add " [DIR]"
+    of pcLinkToFile, pcLinkToDir: result.meta.add " [SYMLINK]"
+    result.meta.add "\n"
 
 proc parseRequest(line: string): Future[Response] {.async.} =
   let res = parseUri(line)
@@ -155,19 +156,18 @@ proc handle(client: AsyncSocket) {.async.} =
     echo line
     try:
       let resp = await parseRequest(line)
-      await client.send($ord(resp.code) & ' ' & resp.meta & "\r\n")
-
-      case resp.code
-      of StatusSuccessFile:
-        while not resp.fileStream.atEnd:
-          await client.send resp.fileStream.readStr(4096)
-        resp.fileStream.close()
-      of StatusSuccessOther:
-        await client.send resp.body
-      else: discard
+      if resp.code == StatusNull:
+        await client.send resp.meta
+      else:
+        await client.send strResp(resp.code, resp.meta)
+        
+        if resp.code == StatusSuccess:
+          while not resp.fileStream.atEnd:
+            await client.send resp.fileStream.readStr(4096)
+          resp.fileStream.close()
     
     except:
-      await client.send("40 INTERNAL ERROR\r\n")
+      await client.send strResp(StatusTempError, "INTERNAL ERROR")
       echo getCurrentExceptionMsg()
       
   client.close()
