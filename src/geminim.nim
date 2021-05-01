@@ -22,7 +22,19 @@ type Response = object
   of StatusSuccess:
     fileStream: FileStream
   else: discard
-  
+
+template strResp(code: RespStatus, meta: string): string =
+  $code & ' ' & meta & "\r\n"
+
+template fileResponse(path: string): Response =
+  Response(code: StatusSuccess,
+           fileStream: newFileStream(path),
+           meta: m.getMimetype(toLowerAscii(path.splitFile.ext)))
+
+const
+  StrSuccessResp = strResp(StatusSuccess, "text/gemini")
+  StrTempErrorResp = strResp(StatusTempError, "INTERNAL ERROR")
+
 var settings: Settings
 
 var certMD5: string
@@ -31,13 +43,6 @@ var m = newMimeTypes()
 m.register(ext = "gemini", mimetype = "text/gemini")
 m.register(ext = "gmi", mimetype = "text/gemini")
 
-template strResp(code = StatusSuccess, meta = "text/gemini"): string =
-  $code & ' ' & meta & "\r\n"
-
-template fileResponse(path: string): Response =
-  Response(code: StatusSuccess,
-           fileStream: newFileStream(path),
-           meta: m.getMimetype(toLowerAscii(path.splitFile.ext)))
 
 proc getUserDir(path: string): (string, string) =
   var i = 2
@@ -48,7 +53,7 @@ proc getUserDir(path: string): (string, string) =
   result = (path[2..<i], path[i..^1])
 
 proc serveScript(res: Uri, zone: Zone, query = ""): Future[Response] {.async.} =
-  result.meta = strResp()
+  result.meta = StrSuccessResp
   
   let script = res.path.relativePath(zone.key)
 
@@ -79,7 +84,7 @@ proc serveDir(path, resPath: string): Future[Response] {.async.} =
   template link(path: string): string =
     "=> " / path
 
-  result.meta = strResp()
+  result.meta = StrSuccessResp
   
   let headerPath = path / settings.dirHeader
   if fileExists(headerPath):
@@ -167,7 +172,7 @@ proc handle(client: AsyncSocket) {.async.} =
           resp.fileStream.close()
     
     except:
-      await client.send strResp(StatusTempError, "INTERNAL ERROR")
+      await client.send StrTempErrorResp
       echo getCurrentExceptionMsg()
       
   client.close()
