@@ -1,48 +1,11 @@
-import net, streams, asyncnet, asyncdispatch,
+import net, asyncnet, asyncdispatch,
        uri, mimetypes, strutils,
        os, osproc, md5
 
-import config
-
-type RespStatus = enum
-  StatusNull
-  StatusInputRequired = "10"
-  StatusSuccess = "20"
-  StatusRedirect = "30"
-  StatusRedirectPerm = "31"
-  StatusTempError = "40"
-  StatusError = "50"
-  StatusNotFound = "51"
-  StatusProxyRefused = "53"
-  StatusMalformedRequest = "59"
-
-type Response = object
-  meta: string
-  case code: RespStatus
-  of StatusSuccess:
-    fileStream: FileStream
-  else: discard
-
-template strResp(code: RespStatus, meta: string): string =
-  $code & ' ' & meta & "\r\n"
-
-template fileResponse(path: string): Response =
-  Response(code: StatusSuccess,
-           fileStream: newFileStream(path),
-           meta: m.getMimetype(toLowerAscii(path.splitFile.ext)))
-
-const
-  StrSuccessResp = strResp(StatusSuccess, "text/gemini")
-  StrTempErrorResp = strResp(StatusTempError, "INTERNAL ERROR")
+import response, config
 
 var settings: Settings
-
 var certMD5: string
-
-var m = newMimeTypes()
-m.register(ext = "gemini", mimetype = "text/gemini")
-m.register(ext = "gmi", mimetype = "text/gemini")
-
 
 proc getUserDir(path: string): (string, string) =
   var i = 2
@@ -53,17 +16,17 @@ proc getUserDir(path: string): (string, string) =
   result = (path[2..<i], path[i..^1])
 
 proc serveScript(res: Uri, zone: Zone, query = ""): Future[Response] {.async.} =
-  result.meta = StrSuccessResp
+  result.meta = SuccessResp
   
   let script = res.path.relativePath(zone.key)
 
   if script == ".":
-    return Response(code: StatusError, meta: "ATTEMPTING TO ACCESS CGI DIR.")
+    return response(StatusError, "ATTEMPTING TO ACCESS CGI DIR.")
   
   let scriptFile = zone.val / script
 
   if not fileExists(scriptFile):
-    return Response(code: StatusNotFound, meta: "CGI SCRIPT " & script & " NOT FOUND.")
+    return response(StatusNotFound, "CGI SCRIPT " & script & " NOT FOUND.")
 
   putEnv("SCRIPT_NAME", script.extractFilename)
   putEnv("SCRIPT_FILENAME", scriptFile)
@@ -76,7 +39,7 @@ proc serveScript(res: Uri, zone: Zone, query = ""): Future[Response] {.async.} =
   if outp != 0:
     var errorMsg = script & " FAILED"
     if query.len > 0: errorMsg.add " WITH QUERY: '" & query & '\''
-    return Response(code: StatusError, meta: errorMsg & '.')
+    return response(StatusError, errorMsg & '.')
 
   result.meta.add body
 
@@ -84,7 +47,7 @@ proc serveDir(path, resPath: string): Future[Response] {.async.} =
   template link(path: string): string =
     "=> " / path
 
-  result.meta = StrSuccessResp
+  result.meta = SuccessResp
   
   let headerPath = path / settings.dirHeader
   if fileExists(headerPath):
@@ -99,7 +62,7 @@ proc serveDir(path, resPath: string): Future[Response] {.async.} =
     let fileName = file.extractFilename
     if fileName.toLowerAscii == "index.gemini" or
        fileName.toLowerAscii == "index.gmi":
-      return fileResponse(file)
+      return response(file)
     
     result.meta.add link(resPath / fileName) & ' ' & fileName
     case kind:
@@ -112,12 +75,12 @@ proc parseRequest(line: string): Future[Response] {.async.} =
   let res = parseUri(line)
   
   if line.len > 1024 or res.hostname.len * res.scheme.len == 0:
-    return Response(code: StatusMalformedRequest, meta: "MALFORMED REQUEST")
+    return response(StatusMalformedRequest, "MALFORMED REQUEST")
 
   let vhostRoot = settings.rootDir / res.hostname
   
   if not dirExists(vhostRoot) or res.scheme != "gemini":
-    return Response(code: StatusProxyRefused, meta: "PROXY REFUSED")
+    return response(StatusProxyRefused, "PROXY REFUSED")
   
   var
     rootDir = vhostRoot
@@ -137,23 +100,23 @@ proc parseRequest(line: string): Future[Response] {.async.} =
     let zone = settings.vhosts[res.hostname].findZone(resPath)
     case zone.ztype
     of ZoneRedirect:
-      return Response(code: StatusRedirect, meta: zone.val)
+      return response(StatusRedirect, zone.val)
     of ZoneRedirectPerm:
-      return Response(code: StatusRedirectPerm, meta: zone.val)
+      return response(StatusRedirectPerm, zone.val)
     of ZoneCgi:
       return await res.serveScript(zone)
     of ZoneInputCgi:
       if res.query.len == 0:
-        return Response(code: StatusInputRequired, meta: "ENTER INPUT")
+        return response(StatusInputRequired, "ENTER INPUT")
       return await res.serveScript(zone, res.query)
     else: discard
 
   if fileExists(filePath):
-    return fileResponse(filePath)
+    return response(filePath)
   elif dirExists(filePath):
     return await serveDir(filePath, resPath)
-  else:
-    return Response(code: StatusNotFound, meta: "'" & res.path & "' NOT FOUND")
+    
+  return response(StatusNotFound, "'" & res.path & "' NOT FOUND")
 
 proc handle(client: AsyncSocket) {.async.} =
   let line = await client.recvLine()
@@ -172,7 +135,7 @@ proc handle(client: AsyncSocket) {.async.} =
           resp.fileStream.close()
     
     except:
-      await client.send StrTempErrorResp
+      await client.send TempErrorResp
       echo getCurrentExceptionMsg()
       
   client.close()
