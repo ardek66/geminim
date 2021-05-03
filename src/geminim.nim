@@ -16,8 +16,6 @@ proc getUserDir(path: string): (string, string) =
   result = (path[2..<i], path[i..^1])
 
 proc serveScript(res: Uri, zone: Zone, query = ""): Future[Response] {.async.} =
-  result.meta = SuccessResp
-  
   let script = res.path.relativePath(zone.key)
 
   if script == ".":
