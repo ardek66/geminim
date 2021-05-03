@@ -1,5 +1,5 @@
 import net, asyncnet, asyncdispatch,
-       uri, mimetypes, strutils,
+       uri, strutils,
        os, osproc, md5
 
 import response, config
