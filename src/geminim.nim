@@ -21,7 +21,7 @@ proc serveScript(res: Uri, zone: Zone, query = ""): Future[Response] {.async.} =
   let script = res.path.relativePath(zone.key)
 
   if script == ".":
-    return response(StatusError, "ATTEMPTING TO ACCESS CGI DIR.")
+    return response(StatusError, "ATTEMPTING TO ACCESS CGI DIR: " & zone.key & "'.")
   
   let scriptFile = zone.val / script
 
@@ -75,12 +75,12 @@ proc parseRequest(line: string): Future[Response] {.async.} =
   let res = parseUri(line)
   
   if line.len > 1024 or res.hostname.len * res.scheme.len == 0:
-    return response(StatusMalformedRequest, "MALFORMED REQUEST")
+    return response(StatusMalformedRequest, "MALFORMED REQUEST: '" & line & "'.")
 
   let vhostRoot = settings.rootDir / res.hostname
   
   if not dirExists(vhostRoot) or res.scheme != "gemini":
-    return response(StatusProxyRefused, "PROXY REFUSED")
+    return response(StatusProxyRefused, "PROXY REFUSED: '" & line & "'.")
   
   var
     rootDir = vhostRoot
