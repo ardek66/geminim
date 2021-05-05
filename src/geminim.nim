@@ -81,12 +81,12 @@ proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.}
     result.meta.add "\n"
 
 proc parseRequest(server: Server, line: string): Future[Response] {.async.} =
+  let res = parseUri(line)
+  
   if line.len > 1024 or res.hostname.len * res.scheme.len == 0:
     return response(StatusMalformedRequest, "MALFORMED REQUEST: '" & line & "'.")
 
-  let
-    res = parseUri(line)
-    vhostRoot = server.settings.rootDir / res.hostname
+  let vhostRoot = server.settings.rootDir / res.hostname
   
   if not dirExists(vhostRoot) or res.scheme != "gemini":
     return response(StatusProxyRefused, "PROXY REFUSED: '" & line & "'.")
