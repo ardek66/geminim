@@ -4,8 +4,19 @@ import net, asyncnet, asyncdispatch,
 
 import response, config
 
-var settings: Settings
-var certMD5: string
+type Server = object
+  socket: AsyncSocket
+  ctx: SslContext
+  settings: Settings
+  certMD5: string
+
+proc initServer(settings: Settings): Server =
+  result.ctx = newContext(certFile = settings.certFile,
+                          keyFile = settings.keyFile)
+
+  result.settings = settings
+  result.certMD5 = readFile(settings.certFile).getMD5()
+  result.socket = newAsyncSocket()
 
 proc getUserDir(path: string): (string, string) =
   var i = 2
@@ -15,7 +26,7 @@ proc getUserDir(path: string): (string, string) =
 
   result = (path[2..<i], path[i..^1])
 
-proc serveScript(res: Uri, zone: Zone, query = ""): Future[Response] {.async.} =
+proc serveScript(server: Server, res: Uri, zone: Zone, query = ""): Future[Response] {.async.} =
   let script = res.path.relativePath(zone.key)
 
   if script == ".":
@@ -26,10 +37,10 @@ proc serveScript(res: Uri, zone: Zone, query = ""): Future[Response] {.async.} =
   if not fileExists(scriptFile):
     return response(StatusNotFound, "CGI SCRIPT " & script & " NOT FOUND.")
 
-  putEnv("SCRIPT_NAME", script.extractFilename)
+  putEnv("SCRIPT_NAME", scriptFile.extractFilename)
   putEnv("SCRIPT_FILENAME", scriptFile)
   putEnv("SERVER_NAME", res.hostname)
-  putEnv("SERVER_PORT", $settings.port)
+  putEnv("SERVER_PORT", $server.settings.port)
   putEnv("QUERY_STRING", query)
   
   let (body, outp) = execCmdEx(scriptFile)
@@ -41,13 +52,13 @@ proc serveScript(res: Uri, zone: Zone, query = ""): Future[Response] {.async.} =
 
   result.meta.add body
 
-proc serveDir(path, resPath: string): Future[Response] {.async.} =
+proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.} =
   template link(path: string): string =
     "=> " / path
 
   result.meta = SuccessResp
   
-  let headerPath = path / settings.dirHeader
+  let headerPath = path / server.settings.dirHeader
   if fileExists(headerPath):
     let banner = readFile(headerPath)
     result.meta.add banner & "\n"
@@ -69,13 +80,13 @@ proc serveDir(path, resPath: string): Future[Response] {.async.} =
     of pcLinkToFile, pcLinkToDir: result.meta.add " [SYMLINK]"
     result.meta.add "\n"
 
-proc parseRequest(line: string): Future[Response] {.async.} =
-  let res = parseUri(line)
-  
+proc parseRequest(server: Server, line: string): Future[Response] {.async.} =
   if line.len > 1024 or res.hostname.len * res.scheme.len == 0:
     return response(StatusMalformedRequest, "MALFORMED REQUEST: '" & line & "'.")
 
-  let vhostRoot = settings.rootDir / res.hostname
+  let
+    res = parseUri(line)
+    vhostRoot = server.settings.rootDir / res.hostname
   
   if not dirExists(vhostRoot) or res.scheme != "gemini":
     return response(StatusProxyRefused, "PROXY REFUSED: '" & line & "'.")
@@ -86,7 +97,7 @@ proc parseRequest(line: string): Future[Response] {.async.} =
       
   if res.path.startsWith("/~"):
     let (user, newPath) = res.path.getUserDir
-    rootDir = settings.homeDir % [user] / res.hostname
+    rootDir = server.settings.homeDir % [user] / res.hostname
     filePath = rootDir / newPath
 
   var resPath = res.path
@@ -94,77 +105,78 @@ proc parseRequest(line: string): Future[Response] {.async.} =
     filePath = vhostRoot
     resPath = "/"
 
-  if settings.vhosts.hasKey res.hostname:
-    let zone = settings.vhosts[res.hostname].findZone(resPath)
+  if server.settings.vhosts.hasKey res.hostname:
+    let zone = server.settings.vhosts[res.hostname].findZone(resPath)
     case zone.ztype
     of ZoneRedirect:
       return response(StatusRedirect, zone.val)
     of ZoneRedirectPerm:
       return response(StatusRedirectPerm, zone.val)
     of ZoneCgi:
-      return await res.serveScript(zone)
+      return await server.serveScript(res, zone)
     of ZoneInputCgi:
       if res.query.len == 0:
         return response(StatusInputRequired, "ENTER INPUT")
-      return await res.serveScript(zone, res.query)
+      return await server.serveScript(res, zone, res.query)
     else: discard
 
   if fileExists(filePath):
     return response(filePath)
   elif dirExists(filePath):
-    return await serveDir(filePath, resPath)
+    return await server.serveDir(filePath, resPath)
     
   return response(StatusNotFound, "'" & res.path & "' NOT FOUND")
 
-proc handle(client: AsyncSocket) {.async.} =
-  let line = await client.recvLine()
-  if line.len > 0:
-    echo line
-    try:
-      let resp = await parseRequest(line)
+proc handle(server: Server, client: AsyncSocket) {.async.} =
+  server.ctx.wrapConnectedSocket(client, handshakeAsServer)
+  try:
+    let line = await client.recvLine()
+    if line.len > 0:
+      echo line
+      let resp = await server.parseRequest(line)
+      
       if resp.code == StatusNull:
         await client.send resp.meta
       else:
         await client.send strResp(resp.code, resp.meta)
-        
+      
         if resp.code == StatusSuccess:
           while not resp.fileStream.atEnd:
             await client.send resp.fileStream.readStr(BufferSize)
           resp.fileStream.close()
     
-    except:
-      await client.send TempErrorResp
-      echo getCurrentExceptionMsg()
+  except:
+    await client.send TempErrorResp
+    echo getCurrentExceptionMsg()
       
   client.close()
 
-proc serve() {.async.} =
-  let ctx = newContext(certFile = settings.certFile,
-                       keyFile = settings.keyFile)
-
-  var server = newAsyncSocket()
-  server.setSockOpt(OptReuseAddr, true)
-  server.setSockOpt(OptReusePort, true)
-  server.bindAddr(Port(settings.port))
-  server.listen()
-
-  ctx.wrapSocket(server)
-  ctx.sessionIdContext = certMD5
+proc serve(server: Server) {.async.} =
+  server.ctx.sessionIdContext = server.certMD5
+  server.ctx.wrapSocket(server.socket)
   
+  server.socket.setSockOpt(OptReuseAddr, true)
+  server.socket.setSockOpt(OptReusePort, true)
+  server.socket.bindAddr(Port(server.settings.port))
+  server.socket.listen()
+
   while true:
     try:
-      let client = await server.accept()
-      ctx.wrapConnectedSocket(client, handshakeAsServer)
-      await client.handle()
+      let client = await server.socket.accept()
+      yield server.handle(client)
     except:
       echo getCurrentExceptionMsg()
 
-if paramCount() != 1:
-  echo "USAGE:"
-  echo "./geminim <path/to/config.ini>"
-elif fileExists(paramStr(1)):
-  settings = readSettings(paramStr(1))
-  certMD5 = readFile(settings.certFile).getMD5()
-  waitFor serve()
-else:
-  echo paramStr(1) & ": file not found"
+proc main() =
+  if paramCount() != 1:
+    echo "USAGE:"
+    echo "./geminim <path/to/config.ini>"
+  else:
+    let file = paramStr(1)
+    if fileExists(file):
+      let server = initServer(file.readSettings)
+      waitFor server.serve()
+    else:
+      echo file & ": file not found"
+
+main()
