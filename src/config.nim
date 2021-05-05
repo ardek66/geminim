@@ -13,12 +13,12 @@ type
     key*, val*: string
     ztype*: ZoneType
 
-  ZoneBuckets* = object
-    mins*, maxs*: seq[int]
+  ZoneBucket = tuple
+    shortest, longest: int
   
   VHost = object
     zones*: seq[Zone]
-    zoneBuckets*: ZoneBuckets
+    zoneBuckets: seq[ZoneBucket]
   
   Settings* = object
     rootDir*: string
@@ -44,8 +44,7 @@ proc insertSort(a: var seq[Zone], x: Zone) =
 
 # Learning romanian would be easier than reading the thing below
 proc initZoneParents(v: var Vhost) =
-  v.zoneBuckets.mins.setLen(v.zones.len)
-  v.zoneBuckets.maxs.setLen(v.zones.len)
+  v.zoneBuckets.setLen(v.zones.len)
   
   var
     i, j: int
@@ -55,22 +54,21 @@ proc initZoneParents(v: var Vhost) =
     
     while j < v.zones.len:
       if v.zones[j].key.isRelativeTo v.zones[i].key:
-        v.zoneBuckets.mins[j] = i
+        v.zoneBuckets[j] = (i, i) # Initialise both shortest and longest path to the same value
       else:
-        v.zoneBuckets.mins[j] = j
+        v.zoneBuckets[j] = (j, j)
         break
       inc j
 
     i = j
 
-  v.zoneBuckets.maxs = v.zoneBuckets.mins
   for i in 0..v.zones.high:
     j = i + 1
     
     while j < v.zones.len:
-      if v.zoneBuckets.mins[j] != v.zoneBuckets.mins[j-1]: break
+      if v.zoneBuckets[j].shortest != v.zoneBuckets[j-1].shortest: break
       if v.zones[j].key.isRelativeTo v.zones[i].key:
-        v.zoneBuckets.maxs[j] = i
+        v.zoneBuckets[j].longest = i
         
       inc j
 
@@ -98,7 +96,7 @@ proc findZone*(a: VHost, p: string): Zone =
         return a.zones[0]
     else:
       var j = i - 1
-      let minIdx = a.zoneBuckets.mins[j]
+      let minIdx = a.zoneBuckets[j].shortest
       
       if p.isRelativeTo a.zones[minIdx].key:
         result = a.zones[minIdx]
@@ -106,7 +104,7 @@ proc findZone*(a: VHost, p: string): Zone =
           if p.isRelativeTo a.zones[j].key:
             return a.zones[j]
           
-          j = a.zoneBuckets.maxs[j]
+          j = a.zoneBuckets[j].longest
 
 proc readSettings*(path: string): Settings =
   result = Settings(
