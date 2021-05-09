@@ -3,6 +3,8 @@ export streams
 
 type RespStatus* = enum
   StatusNull
+  StatusCGI
+  
   StatusInputRequired = "10"
   StatusSuccess = "20"
   StatusRedirect = "30"
@@ -14,11 +16,11 @@ type RespStatus* = enum
   StatusMalformedRequest = "59"
 
 type Response* = object
-  meta*: string
-  case code*: RespStatus
-  of StatusSuccess:
-    fileStream*: FileStream
-  else: discard
+    meta*: string
+    case code*: RespStatus
+    of StatusSuccess:
+      fileStream*: FileStream
+    else: discard
 
 var m = newMimeTypes()
 m.register(ext = "gemini", mimetype = "text/gemini")

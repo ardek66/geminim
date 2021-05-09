@@ -26,32 +26,6 @@ proc getUserDir(path: string): (string, string) =
 
   result = (path[2..<i], path[i..^1])
 
-proc serveScript(server: Server, res: Uri, zone: Zone, query = ""): Future[Response] {.async.} =
-  let script = res.path.relativePath(zone.key)
-
-  if script == ".":
-    return response(StatusError, "ATTEMPTING TO ACCESS CGI DIR: " & zone.key & "'.")
-  
-  let scriptFile = zone.val / script
-
-  if not fileExists(scriptFile):
-    return response(StatusNotFound, "CGI SCRIPT " & script & " NOT FOUND.")
-
-  putEnv("SCRIPT_NAME", scriptFile.extractFilename)
-  putEnv("SCRIPT_FILENAME", scriptFile)
-  putEnv("SERVER_NAME", res.hostname)
-  putEnv("SERVER_PORT", $server.settings.port)
-  putEnv("QUERY_STRING", query)
-  
-  let (body, outp) = execCmdEx(scriptFile)
-  
-  if outp != 0:
-    var errorMsg = script & " FAILED"
-    if query.len > 0: errorMsg.add " WITH QUERY: '" & query & '\''
-    return response(StatusError, errorMsg & '.')
-
-  result.meta.add body
-
 proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.} =
   template link(path: string): string =
     "=> " / path
@@ -80,16 +54,14 @@ proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.}
     of pcLinkToFile, pcLinkToDir: result.meta.add " [SYMLINK]"
     result.meta.add "\n"
 
-proc parseRequest(server: Server, line: string): Future[Response] {.async.} =
-  let res = parseUri(line)
-  
-  if line.len > 1024 or res.hostname.len * res.scheme.len == 0:
-    return response(StatusMalformedRequest, "MALFORMED REQUEST: '" & line & "'.")
+proc parseRequest(server: Server, res: Uri): Future[Response] {.async.} =
+  if len($res) > 1024 or res.hostname.len * res.scheme.len == 0:
+    return response(StatusMalformedRequest, "MALFORMED REQUEST: '" & $res & "'.")
 
   let vhostRoot = server.settings.rootDir / res.hostname
   
   if not dirExists(vhostRoot) or res.scheme != "gemini":
-    return response(StatusProxyRefused, "PROXY REFUSED: '" & line & "'.")
+    return response(StatusProxyRefused, "PROXY REFUSED: '" & $res & "'.")
   
   var
     rootDir = vhostRoot
@@ -113,11 +85,7 @@ proc parseRequest(server: Server, line: string): Future[Response] {.async.} =
     of ZoneRedirectPerm:
       return response(StatusRedirectPerm, zone.val)
     of ZoneCgi:
-      return await server.serveScript(res, zone)
-    of ZoneInputCgi:
-      if res.query.len == 0:
-        return response(StatusInputRequired, "ENTER INPUT")
-      return await server.serveScript(res, zone, res.query)
+      return response(StatusCGI, zone.val)
     else: discard
 
   if fileExists(filePath):
@@ -127,24 +95,52 @@ proc parseRequest(server: Server, line: string): Future[Response] {.async.} =
     
   return response(StatusNotFound, "'" & res.path & "' NOT FOUND")
 
+proc sendBuffer(client: AsyncSocket, stream: Stream) {.async.} =
+  while not stream.atEnd:
+    await client.send stream.readStr(BufferSize)
+
+  
 proc handle(server: Server, client: AsyncSocket) {.async.} =
   server.ctx.wrapConnectedSocket(client, handshakeAsServer)
+  
   try:
     let line = await client.recvLine()
     if line.len > 0:
       echo line
-      let resp = await server.parseRequest(line)
+      let
+        uri = parseUri(line)
+        resp = await server.parseRequest(uri)
       
-      if resp.code == StatusNull:
+      case resp.code
+      of StatusNull:
         await client.send resp.meta
+      
+      of StatusCGI:
+          let
+            scriptFilename = resp.meta
+            scriptName = scriptFilename.extractFileName()
+
+          if not fileExists(scriptFilename):
+            await client.send strResp(StatusNotFound, "CGI SCRIPT " & scriptName & " NOT FOUND.")
+
+          putEnv("SCRIPT_NAME", scriptName)
+          putEnv("SCRIPT_FILENAME", scriptFilename)
+          putEnv("SERVER_NAME", uri.hostname)
+          putEnv("SERVER_PORT", $server.settings.port)
+          putEnv("PATH_INFO", uri.path)
+          putEnv("QUERY_STRING", uri.query)
+
+          var p = startProcess(scriptFilename)
+          await client.sendBuffer(p.outputStream)
+          p.close()
+          
       else:
         await client.send strResp(resp.code, resp.meta)
       
         if resp.code == StatusSuccess:
-          while not resp.fileStream.atEnd:
-            await client.send resp.fileStream.readStr(BufferSize)
+          await client.sendBuffer resp.fileStream
           resp.fileStream.close()
-    
+          
   except:
     await client.send TempErrorResp
     echo getCurrentExceptionMsg()
