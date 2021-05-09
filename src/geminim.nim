@@ -122,17 +122,17 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
 
           if not fileExists(scriptFilename):
             await client.send strResp(StatusNotFound, "CGI SCRIPT " & scriptName & " NOT FOUND.")
+          else:
+            putEnv("SCRIPT_NAME", scriptName)
+            putEnv("SCRIPT_FILENAME", scriptFilename)
+            putEnv("SERVER_NAME", uri.hostname)
+            putEnv("SERVER_PORT", $server.settings.port)
+            putEnv("PATH_INFO", uri.path)
+            putEnv("QUERY_STRING", uri.query)
 
-          putEnv("SCRIPT_NAME", scriptName)
-          putEnv("SCRIPT_FILENAME", scriptFilename)
-          putEnv("SERVER_NAME", uri.hostname)
-          putEnv("SERVER_PORT", $server.settings.port)
-          putEnv("PATH_INFO", uri.path)
-          putEnv("QUERY_STRING", uri.query)
-
-          var p = startProcess(scriptFilename)
-          await client.sendBuffer(p.outputStream)
-          p.close()
+            var p = startProcess(scriptFilename)
+            await client.sendBuffer(p.outputStream)
+            p.close()
           
       else:
         await client.send strResp(resp.code, resp.meta)
