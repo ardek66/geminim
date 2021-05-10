@@ -1,5 +1,5 @@
 import net, asyncnet, asyncdispatch,
-       uri, strutils,
+       uri, strutils, strtabs,
        os, osproc, md5
 
 import response, config
@@ -123,14 +123,17 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
           if not fileExists(scriptFilename):
             await client.send strResp(StatusNotFound, "CGI SCRIPT " & scriptName & " NOT FOUND.")
           else:
-            putEnv("SCRIPT_NAME", scriptName)
-            putEnv("SCRIPT_FILENAME", scriptFilename)
-            putEnv("SERVER_NAME", uri.hostname)
-            putEnv("SERVER_PORT", $server.settings.port)
-            putEnv("PATH_INFO", uri.path)
-            putEnv("QUERY_STRING", uri.query)
+            let envTable =
+              {
+                "SCRIPT_NAME": scriptName,
+                "SCRIPT_FILENAME": scriptFilename,
+                "SERVER_NAME": uri.hostname,
+                "SERVER_PORT": $server.settings.port,
+                "PATH_INFO": uri.path,
+                "QUERY_STRING": uri.query,
+              }.newStringTable
 
-            var p = startProcess(scriptFilename)
+            var p = startProcess(scriptFilename, env = envTable)
             await client.sendBuffer(p.outputStream)
             p.close()
           
