@@ -1,5 +1,4 @@
-import streams, mimetypes, os
-export streams
+import asyncfile
 
 type RespStatus* = enum
   StatusNull
@@ -19,12 +18,8 @@ type Response* = object
   meta*: string
   case code*: RespStatus
   of StatusSuccess:
-    fileStream*: FileStream
+    file*: AsyncFile
   else: discard
-
-var m = newMimeTypes()
-m.register(ext = "gemini", mimetype = "text/gemini")
-m.register(ext = "gmi", mimetype = "text/gemini")
 
 {.push inline.}
 proc strResp*(code: RespStatus, meta: string): string =
@@ -32,10 +27,6 @@ proc strResp*(code: RespStatus, meta: string): string =
 
 proc response*(code: RespStatus, meta: string): Response =
   Response(code: code, meta: meta)
-
-proc response*(path: string): Response =
-  result = response(StatusSuccess, m.getMimetype(path.splitFile.ext))
-  result.fileStream = newFileStream(path)
 {.pop.}
 
 const

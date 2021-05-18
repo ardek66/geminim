@@ -1,8 +1,12 @@
-import net, asyncnet, asyncdispatch,
-       uri, strutils, strtabs,
-       os, osproc, md5
+import net, asyncnet, asyncdispatch, asyncfile,
+       uri, strutils, strtabs, streams,
+       os, osproc, md5, mimetypes
 
 import response, config
+
+var m = newMimeTypes()
+m.register(ext = "gemini", mimetype = "text/gemini")
+m.register(ext = "gmi", mimetype = "text/gemini")
 
 type Server = object
   socket: AsyncSocket
@@ -26,6 +30,10 @@ proc getUserDir(path: string): (string, string) =
 
   result = (path[2..<i], path[i..^1])
 
+proc serveFile(server: Server, path: string): Future[Response] {.async.} =
+  result = response(StatusSuccess, m.getMimetype(path.splitFile.ext))
+  result.file = openAsync(path)
+
 proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.} =
   template link(path: string): string =
     "=> " / path
@@ -45,7 +53,7 @@ proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.}
     let fileName = file.extractFilename
     if fileName.toLowerAscii == "index.gemini" or
        fileName.toLowerAscii == "index.gmi":
-      return response(file)
+      return await server.serveFile(file)
     
     result.meta.add link(resPath / fileName) & ' ' & fileName
     case kind:
@@ -89,16 +97,11 @@ proc parseRequest(server: Server, res: Uri): Future[Response] {.async.} =
     else: discard
 
   if fileExists(filePath):
-    return response(filePath)
+    return await server.serveFile(filePath)
   elif dirExists(filePath):
     return await server.serveDir(filePath, resPath)
     
   return response(StatusNotFound, "'" & res.path & "' NOT FOUND")
-
-proc sendBuffer(client: AsyncSocket, stream: Stream) {.async.} =
-  while not stream.atEnd:
-    await client.send stream.readStr(BufferSize)
-
   
 proc handle(server: Server, client: AsyncSocket) {.async.} =
   server.ctx.wrapConnectedSocket(client, handshakeAsServer)
@@ -134,15 +137,20 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
               }.newStringTable
 
             var p = startProcess(scriptFilename, env = envTable)
-            await client.sendBuffer(p.outputStream)
+            while not p.outputStream.atEnd:
+              await client.send p.outputStream.readStr(BufferSize)
             p.close()
           
       else:
         await client.send strResp(resp.code, resp.meta)
       
         if resp.code == StatusSuccess:
-          await client.sendBuffer resp.fileStream
-          resp.fileStream.close()
+          while true:
+            let buffer = await resp.file.read(BufferSize)
+            if buffer.len < 1: break
+            await client.send buffer
+            
+          resp.file.close()
           
   except:
     await client.send TempErrorResp
