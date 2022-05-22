@@ -33,11 +33,12 @@ proc getUserDir(path: string): (string, string) =
 proc receiveFile(server: Server, client: AsyncSocket, path: string): Future[Response] {.async.} =
   let params = path.split(";")
   if params.len < 2:
-    return response(StatusMalformedRequest, "")
+    return response(StatusMalformedRequest)
 
-  var size: int
-  var token: string
-  for i in 0 ..< params.len:
+  var 
+    size: int
+    token: string
+  for i in 0..params.high:
     if i == 0: # actual path
       continue 
 
@@ -118,7 +119,7 @@ proc parseRequest(server: Server, res: Uri): Future[Response] {.async.} =
   let parsedHostname = res.hostname.split(";")
   let vhostRoot = server.settings.rootDir / parsedHostname[0]
   
-  if not dirExists(vhostRoot) or not ["gemini", "titan"].contains(res.scheme):
+  if not dirExists(vhostRoot) or res.scheme notin ["gemini", "titan"]:
     return response(StatusProxyRefused, "PROXY REFUSED: '" & $res & "'.")
   
   var

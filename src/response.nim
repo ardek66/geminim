@@ -35,7 +35,7 @@ type Response* = object
 proc strResp*(code: RespStatus, meta: string): string =
   $code & ' ' & meta & "\r\n"
 
-proc response*(code: RespStatus, meta: string): Response =
+proc response*(code: RespStatus, meta = ""): Response =
   Response(code: code, meta: meta)
 {.pop.}
 
