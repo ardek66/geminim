@@ -73,7 +73,7 @@ proc receiveFile(server: Server, client: AsyncSocket, path: string): Future[Resp
     await file.write(buffer)
     file.close()
   except:
-    echo getcurrentExceptionMsg()
+    echo getCurrentExceptionMsg()
     return response(StatusError, "")
 
   result = response(StatusSuccess, "text/gemini\r\nSuccessfully wrote file")
