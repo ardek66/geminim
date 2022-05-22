@@ -30,6 +30,55 @@ proc getUserDir(path: string): (string, string) =
 
   result = (path[2..<i], path[i..^1])
 
+proc receiveFile(server: Server, client: AsyncSocket, path: string): Future[Response] {.async.} =
+  let params = path.split(";")
+  if params.len < 2:
+    return response(StatusMalformedRequest, "")
+
+  var size: int
+  var token: string
+  for i in 0 ..< params.len:
+    if i == 0: # actual path
+      continue 
+
+    let keyVal = params[i].split("=")
+    if keyVal.len != 2:
+      return response(StatusMalformedRequest, "Bad parameter: " & params[i])
+    if keyVal[0] == "size":
+      try:
+        size = keyVal[1].parseInt()
+      except ValueError:
+        return response(StatusMalformedRequest, "Size " & keyVal[1] & " is invalid")
+    if keyVal[0] == "token":
+      token = keyVal[1]
+
+  if size == 0:
+    return response(StatusMalformedRequest, "No file size specified")
+  if size > server.settings.titanUploadLimit:
+    return response(StatusError,
+      "File size exceeds limit of " & $server.settings.titanUploadLimit & " bytes.")
+
+  if decodeUrl(token) != server.settings.titanPass and server.settings.titanPassRequired:
+    return response(StatusNotAuthorised, "Token not recognized")
+
+  var filePath: string
+  if dirExists(params[0]):
+    filePath = params[0] / "index.gmi" # assume we want to write index.gmi
+  else: # we're writing an actual file
+    filePath = params[0]
+  let buffer = await client.recv(size)
+  try:
+    let file = openAsync(filePath, fmWrite)
+
+    await file.write(buffer)
+    file.close()
+  except:
+    echo getcurrentExceptionMsg()
+    return response(StatusError, "")
+
+  result = response(StatusSuccess, "text/gemini\r\nSuccessfully wrote file")
+
+
 proc serveFile(server: Server, path: string): Future[Response] {.async.} =
   result = response(StatusSuccess, m.getMimetype(path.splitFile.ext))
   result.file = openAsync(path)
@@ -66,9 +115,10 @@ proc parseRequest(server: Server, res: Uri): Future[Response] {.async.} =
   if len($res) > 1024 or res.hostname.len * res.scheme.len == 0:
     return response(StatusMalformedRequest, "MALFORMED REQUEST: '" & $res & "'.")
 
-  let vhostRoot = server.settings.rootDir / res.hostname
+  let parsedHostname = res.hostname.split(";")
+  let vhostRoot = server.settings.rootDir / parsedHostname[0]
   
-  if not dirExists(vhostRoot) or res.scheme != "gemini":
+  if not dirExists(vhostRoot) or not ["gemini", "titan"].contains(res.scheme):
     return response(StatusProxyRefused, "PROXY REFUSED: '" & $res & "'.")
   
   var
@@ -96,6 +146,19 @@ proc parseRequest(server: Server, res: Uri): Future[Response] {.async.} =
       return response(StatusCGI, zone.val)
     else: discard
 
+  # returning this as a response is hacky but it saves me
+  # passing the socket to all of these functions
+  # 
+  # that said, having to effectively reassemble the uri
+  # just to parse it again later is ugly AF
+  if res.scheme == "titan":
+    var titanPath = filePath
+    for param in parsedHostname:
+      if not param.contains("="): # either an invalid parameter or the path
+        continue
+      titanPath = titanPath & ";" & param
+    return response(StatusTitan, titanPath)
+
   if fileExists(filePath):
     return await server.serveFile(filePath)
   elif dirExists(filePath):
@@ -118,6 +181,10 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
       of StatusNull:
         await client.send resp.meta
       
+      of StatusTitan:
+        let titanResp = await server.receiveFile(client, resp.meta)
+        await client.send strResp(titanResp.code, titanResp.meta)
+        
       of StatusCGI:
           let
             scriptFilename = resp.meta

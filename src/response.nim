@@ -3,16 +3,26 @@ import asyncfile
 type RespStatus* = enum
   StatusNull
   StatusCGI
+  StatusTitan
   
   StatusInputRequired = "10"
+  StatusSensitiveInput = "11"
   StatusSuccess = "20"
   StatusRedirect = "30"
   StatusRedirectPerm = "31"
   StatusTempError = "40"
+  StatusServerUnavailable = "41"
+  StatusCGIError = "42"
+  StatusProxyError = "43"
+  StatusSlowDown = "44"
   StatusError = "50"
   StatusNotFound = "51"
+  StatusGone = "52"
   StatusProxyRefused = "53"
   StatusMalformedRequest = "59"
+  StatusCertificateRequired = "60"
+  StatusNotAuthorised = "61"
+  StatusNotValid = "62"
 
 type Response* = object
   meta*: string
