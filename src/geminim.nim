@@ -167,7 +167,7 @@ proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.}
     of pcLinkToFile, pcLinkToDir: result.body.add " [SYMLINK]"
     result.body.add "\n"
 
-proc parseGeminiRequest(server: Server, res: Uri): Future[Response] {.async.} =
+proc processGeminiRequest(server: Server, res: Uri): Future[Response] {.async.} =
   let vhostRoot = server.settings.rootDir / res.hostname
   
   if not dirExists(vhostRoot):
@@ -222,7 +222,7 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
 
       case uri.scheme
       of "gemini":
-        let resp = await server.parseGeminiRequest(uri)
+        let resp = await server.processGeminiRequest(uri)
         
         case resp.code
         of StatusNull:
