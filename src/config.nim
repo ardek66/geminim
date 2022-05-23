@@ -27,6 +27,9 @@ type
     vhosts*: Table[string, VHost]
     homeDir*: string
     dirHeader*: string
+    titanPass*: string
+    titanPassRequired*: bool
+    titanUploadLimit*: int
 
 const defaultHome =
   when defined(posix): "/home/$#/"
@@ -113,7 +116,10 @@ proc readSettings*(path: string): Settings =
     certFile: "mycert.pem",
     keyFile: "mykey.pem",
     homeDir: defaultHome,
-    dirHeader: "header.gemini")
+    dirHeader: "header.gemini",
+    titanPass: "titanpassword",
+    titanPassRequired: true,
+    titanUploadLimit: 10485760)
 
   var f = newFilestream(path, fmRead)
   if f != nil:
@@ -140,6 +146,13 @@ proc readSettings*(path: string): Settings =
           of "keyfile": result.keyfile = e.value
           of "homedir": result.homeDir = e.value
           of "dirheader": result.dirHeader = e.value
+          of "titanpass": result.titanPass = e.value
+          of "titanpassrequired":
+            if e.value == "false":
+              result.titanPassRequired = false
+            else:
+              result.titanPassRequired = true
+          of "titanuploadlimit": result.titanUploadLimit = e.value.parseInt
         else:
           let zoneType =
             case keyval[1]
