@@ -111,7 +111,7 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
         await client.send strResp(StatusMalformedRequest, "REQUEST IS TOO LONG.")
       
       let uri = parseUri(line)
-      if uri.hostname.len * uri.scheme.len == 0:
+      if uri.hostname.len == 0 or uri.scheme.len == 0:
         await client.send strResp(StatusMalformedRequest, "MALFORMED REQUEST: '" & line & "'.")
 
       case uri.scheme
