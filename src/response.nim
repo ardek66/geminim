@@ -3,7 +3,6 @@ import asyncfile
 type RespStatus* = enum
   StatusNull
   StatusCGI
-  StatusTitan
   
   StatusInputRequired = "10"
   StatusSensitiveInput = "11"

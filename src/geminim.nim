@@ -30,10 +30,67 @@ proc getUserDir(path: string): (string, string) =
 
   result = (path[2..<i], path[i..^1])
 
-proc receiveFile(server: Server, client: AsyncSocket, path: string): Future[Response] {.async.} =
-  let params = path.split(";")
+proc processCGI(server: Server, client: AsyncSocket, scriptFilename: string, uri: Uri): Future[void] {.async.} =
+  let
+    scriptName = scriptFilename.extractFileName()
+
+  if not fileExists(scriptFilename):
+    await client.send strResp(StatusNotFound, "CGI SCRIPT " & scriptName & " NOT FOUND.")
+  else:
+    let envTable =
+      {
+        "SCRIPT_NAME": scriptName,
+        "SCRIPT_FILENAME": scriptFilename,
+        "SERVER_NAME": uri.hostname,
+        "SERVER_PORT": $server.settings.port,
+        "PATH_INFO": uri.path,
+        "QUERY_STRING": uri.query,
+        "REQUEST_URI": $uri
+      }.newStringTable
+
+    var p = startProcess(scriptFilename, env = envTable)
+    while not p.outputStream.atEnd:
+      await client.send p.outputStream.readStr(BufferSize)
+    p.close()
+  
+
+proc processTitanRequest(server: Server, client: AsyncSocket, req: string): Future[Response] {.async.} =
+  let
+    params = split($req, ";")
+    res = params[0].parseUri
+
   if params.len < 2:
     return response(StatusMalformedRequest)
+ 
+  let vhostRoot = server.settings.rootDir / res.hostname
+  
+  if not dirExists(vhostRoot):
+    return response(StatusProxyRefused, "PROXY REFUSED: '" & $res & "'.")
+  
+  var
+    rootDir = vhostRoot
+    filePath = rootDir / res.hostname
+      
+  if res.path.startsWith("/~"):
+    let (user, newPath) = res.path.getUserDir
+    rootDir = server.settings.homeDir % [user] / res.hostname
+    filePath = rootDir / newPath
+
+  var resPath = res.path
+  if not filePath.startsWith rootDir:
+    filePath = vhostRoot
+    resPath = "/"
+
+  if server.settings.vhosts.hasKey res.hostname:
+    let zone = server.settings.vhosts[res.hostname].findZone(resPath)
+    case zone.ztype
+    of ZoneRedirect:
+      return response(StatusRedirect, zone.val)
+    of ZoneRedirectPerm:
+      return response(StatusRedirectPerm, zone.val)
+    of ZoneCgi:
+      return response(StatusCGI, zone.val)
+    else: discard
 
   var 
     size: int
@@ -51,7 +108,7 @@ proc receiveFile(server: Server, client: AsyncSocket, path: string): Future[Resp
       except ValueError:
         return response(StatusMalformedRequest, "Size " & keyVal[1] & " is invalid")
     if keyVal[0] == "token":
-      token = keyVal[1]
+      token = keyVal[1].decodeUrl
 
   if size == 0:
     return response(StatusMalformedRequest, "No file size specified")
@@ -59,14 +116,12 @@ proc receiveFile(server: Server, client: AsyncSocket, path: string): Future[Resp
     return response(StatusError,
       "File size exceeds limit of " & $server.settings.titanUploadLimit & " bytes.")
 
-  if decodeUrl(token) != server.settings.titanPass and server.settings.titanPassRequired:
+  if token != server.settings.titanPass and server.settings.titanPassRequired:
     return response(StatusNotAuthorised, "Token not recognized")
 
-  var filePath: string
-  if dirExists(params[0]):
-    filePath = params[0] / "index.gmi" # assume we want to write index.gmi
-  else: # we're writing an actual file
-    filePath = params[0]
+  if dirExists(filePath):
+    filePath = filePath / "index.gmi" # assume we want to write index.gmi
+
   let buffer = await client.recv(size)
   try:
     let file = openAsync(filePath, fmWrite)
@@ -173,28 +228,8 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
           await client.send resp.meta
           
         of StatusCGI:
-          let
-            scriptFilename = resp.meta
-            scriptName = scriptFilename.extractFileName()
+          await server.processCGI(client, resp.meta, uri)
 
-          if not fileExists(scriptFilename):
-            await client.send strResp(StatusNotFound, "CGI SCRIPT " & scriptName & " NOT FOUND.")
-          else:
-            let envTable =
-              {
-                "SCRIPT_NAME": scriptName,
-                "SCRIPT_FILENAME": scriptFilename,
-                "SERVER_NAME": uri.hostname,
-                "SERVER_PORT": $server.settings.port,
-                "PATH_INFO": uri.path,
-                "QUERY_STRING": uri.query,
-              }.newStringTable
-
-            var p = startProcess(scriptFilename, env = envTable)
-            while not p.outputStream.atEnd:
-              await client.send p.outputStream.readStr(BufferSize)
-            p.close()
-          
         else:
           await client.send strResp(resp.code, resp.meta)
       
@@ -205,7 +240,16 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
               await client.send buffer
             
             resp.file.close()
-            
+
+      of "titan":
+        let resp = await server.processTitanRequest(client, line)
+        case resp.code
+        of StatusCGI:
+          await server.processCGI(client, resp.meta, uri)
+          
+        else:
+          await client.send strResp(resp.code, resp.meta)
+             
       else:
         await client.send strResp(StatusMalformedRequest, "UNSUPORTED PROTOCOL: '" & uri.scheme & "'.")
           
