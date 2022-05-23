@@ -144,28 +144,28 @@ proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.}
   template link(path: string): string =
     "=> " / path
 
-  result.meta = SuccessResp
+  result = response(StatusSuccessDir, "text/gemini")
   
   let headerPath = path / server.settings.dirHeader
   if fileExists(headerPath):
     let banner = readFile(headerPath)
-    result.meta.add banner & "\n"
+    result.body.add banner & "\n"
   
-  result.meta.add "### Index of " & resPath.normalizedPath & "\n"
+  result.body.add "### Index of " & resPath.normalizedPath & "\n"
   
   if resPath.parentDir != "":
-    result.meta.add link(resPath.splitPath.head) & " [..]" & "\n"
+    result.body.add link(resPath.splitPath.head) & " [..]" & "\n"
   for kind, file in path.walkDir:
     let fileName = file.extractFilename
     if fileName.toLowerAscii in ["index.gemini", "index.gmi"]:
       return await server.serveFile(file)
     
-    result.meta.add link(resPath / fileName) & ' ' & fileName
+    result.body.add link(resPath / fileName) & ' ' & fileName
     case kind:
-    of pcFile: result.meta.add " [FILE]"
-    of pcDir: result.meta.add " [DIR]"
-    of pcLinkToFile, pcLinkToDir: result.meta.add " [SYMLINK]"
-    result.meta.add "\n"
+    of pcFile: result.body.add " [FILE]"
+    of pcDir: result.body.add " [DIR]"
+    of pcLinkToFile, pcLinkToDir: result.body.add " [SYMLINK]"
+    result.body.add "\n"
 
 proc parseGeminiRequest(server: Server, res: Uri): Future[Response] {.async.} =
   let vhostRoot = server.settings.rootDir / res.hostname
@@ -230,17 +230,22 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
           
         of StatusCGI:
           await server.processCGI(client, resp.meta, uri)
-
+        
         else:
           await client.send strResp(resp.code, resp.meta)
       
-          if resp.code == StatusSuccess:
+          case resp.code
+          of StatusSuccess:
             while true:
               let buffer = await resp.file.read(BufferSize)
               if buffer.len < 1: break
               await client.send buffer
-            
             resp.file.close()
+            
+          of StatusSuccessDir:
+            await client.send resp.body
+          
+          else: discard
 
       of "titan":
         let resp = await server.processTitanRequest(client, line)

@@ -7,6 +7,7 @@ type RespStatus* = enum
   StatusInputRequired = "10"
   StatusSensitiveInput = "11"
   StatusSuccess = "20"
+  StatusSuccessDir = "21"
   StatusRedirect = "30"
   StatusRedirectPerm = "31"
   StatusTempError = "40"
@@ -28,6 +29,8 @@ type Response* = object
   case code*: RespStatus
   of StatusSuccess:
     file*: AsyncFile
+  of StatusSuccessDir:
+    body*: string
   else: discard
 
 {.push inline.}
