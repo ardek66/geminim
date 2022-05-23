@@ -51,8 +51,7 @@ proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.}
     result.meta.add link(resPath.splitPath.head) & " [..]" & "\n"
   for kind, file in path.walkDir:
     let fileName = file.extractFilename
-    if fileName.toLowerAscii == "index.gemini" or
-       fileName.toLowerAscii == "index.gmi":
+    if fileName.toLowerAscii in ["index.gemini", "index.gmi"]:
       return await server.serveFile(file)
     
     result.meta.add link(resPath / fileName) & ' ' & fileName
@@ -62,13 +61,10 @@ proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.}
     of pcLinkToFile, pcLinkToDir: result.meta.add " [SYMLINK]"
     result.meta.add "\n"
 
-proc parseRequest(server: Server, res: Uri): Future[Response] {.async.} =
-  if len($res) > 1024 or res.hostname.len * res.scheme.len == 0:
-    return response(StatusMalformedRequest, "MALFORMED REQUEST: '" & $res & "'.")
-
+proc parseGeminiRequest(server: Server, res: Uri): Future[Response] {.async.} =
   let vhostRoot = server.settings.rootDir / res.hostname
   
-  if not dirExists(vhostRoot) or res.scheme != "gemini":
+  if not dirExists(vhostRoot):
     return response(StatusProxyRefused, "PROXY REFUSED: '" & $res & "'.")
   
   var
@@ -110,15 +106,23 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
     let line = await client.recvLine()
     if line.len > 0:
       echo line
-      let
-        uri = parseUri(line)
-        resp = await server.parseRequest(uri)
+
+      if(line.len > 1024):
+        await client.send strResp(StatusMalformedRequest, "REQUEST IS TOO LONG.")
       
-      case resp.code
-      of StatusNull:
-        await client.send resp.meta
-      
-      of StatusCGI:
+      let uri = parseUri(line)
+      if uri.hostname.len * uri.scheme.len == 0:
+        await client.send strResp(StatusMalformedRequest, "MALFORMED REQUEST: '" & line & "'.")
+
+      case uri.scheme
+      of "gemini":
+        let resp = await server.parseGeminiRequest(uri)
+        
+        case resp.code
+        of StatusNull:
+          await client.send resp.meta
+          
+        of StatusCGI:
           let
             scriptFilename = resp.meta
             scriptName = scriptFilename.extractFileName()
@@ -141,16 +145,19 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
               await client.send p.outputStream.readStr(BufferSize)
             p.close()
           
-      else:
-        await client.send strResp(resp.code, resp.meta)
+        else:
+          await client.send strResp(resp.code, resp.meta)
       
-        if resp.code == StatusSuccess:
-          while true:
-            let buffer = await resp.file.read(BufferSize)
-            if buffer.len < 1: break
-            await client.send buffer
+          if resp.code == StatusSuccess:
+            while true:
+              let buffer = await resp.file.read(BufferSize)
+              if buffer.len < 1: break
+              await client.send buffer
             
-          resp.file.close()
+            resp.file.close()
+            
+      else:
+        await client.send strResp(StatusMalformedRequest, "UNSUPORTED PROTOCOL: '" & uri.scheme & "'.")
           
   except:
     await client.send TempErrorResp
