@@ -3,12 +3,7 @@ stdenv.mkDerivation rec {
   name = "geminim";
   version = "0.1.4";
 
-  src = fetchFromGitHub {
-    owner = "ardek66";
-    repo = "geminim";
-    rev = "master";
-    sha256 = "1hc6fpzx7sznni56nhmcb9y5q4z3zjaky2gmk3lfsrf82cxjjakx";
-  };
+  src = ./src;
 
   nativeBuildInputs = [ openssl nim ];
 
