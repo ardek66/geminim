@@ -62,6 +62,7 @@ proc processTitanRequest(server: Server, client: AsyncSocket, req: string): Futu
   if params.len < 2:
     return response(StatusMalformedRequest)
  
+  # TODO: unduplicate this part
   let vhostRoot = server.settings.rootDir / res.hostname
   
   if not dirExists(vhostRoot):
