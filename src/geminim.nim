@@ -162,7 +162,7 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
     return response(StatusError, "")
 
   if server.settings.titanRedirect:
-    result = response(StatusRedirect, ($req.params[0]).replace("titan://", "gemini://"))
+    result = response(StatusRedirect, req.params[0].replace("titan://", "gemini://"))
   else:
     result = response(StatusSuccess, "text/gemini\r\nSuccessfully wrote file")
 
