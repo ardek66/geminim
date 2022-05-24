@@ -30,6 +30,7 @@ type
     titanPass*: string
     titanPassRequired*: bool
     titanUploadLimit*: int
+    titanRedirect*: bool
 
 const defaultHome =
   when defined(posix): "/home/$#/"
@@ -119,7 +120,8 @@ proc readSettings*(path: string): Settings =
     dirHeader: "header.gemini",
     titanPass: "titanpassword",
     titanPassRequired: true,
-    titanUploadLimit: 10485760)
+    titanUploadLimit: 10485760,
+    titanRedirect: true)
 
   var f = newFilestream(path, fmRead)
   if f != nil:
@@ -153,6 +155,11 @@ proc readSettings*(path: string): Settings =
             else:
               result.titanPassRequired = true
           of "titanuploadlimit": result.titanUploadLimit = e.value.parseInt
+          of "titanredirect":
+            if e.value == "false":
+              result.titanRedirect = false
+            else:
+              result.titanRedirect = true
         else:
           let zoneType =
             case keyval[1]

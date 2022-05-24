@@ -69,7 +69,7 @@ proc processTitanRequest(server: Server, client: AsyncSocket, req: string): Futu
   
   var
     rootDir = vhostRoot
-    filePath = rootDir / res.hostname
+    filePath = rootDir / res.path
       
   if res.path.startsWith("/~"):
     let (user, newPath) = res.path.getUserDir
@@ -119,8 +119,16 @@ proc processTitanRequest(server: Server, client: AsyncSocket, req: string): Futu
   if token != server.settings.titanPass and server.settings.titanPassRequired:
     return response(StatusNotAuthorised, "Token not recognized")
 
-  if dirExists(filePath):
-    filePath = filePath / "index.gmi" # assume we want to write index.gmi
+  let (parent, _ )= filePath.splitPath
+
+  if dirExists(parent):
+    if dirExists(filePath): # We're writing index.gmi in an existing directory
+      filePath = filePath / "index.gmi"
+  else: # we're writing a file in a new directory
+    try:
+      createDir(parent)
+    except:
+      return response(StatusError, "Could not create directory: " & parent)
 
   let buffer = await client.recv(size)
   try:
@@ -132,7 +140,10 @@ proc processTitanRequest(server: Server, client: AsyncSocket, req: string): Futu
     echo getCurrentExceptionMsg()
     return response(StatusError, "")
 
-  result = response(StatusSuccess, "text/gemini\r\nSuccessfully wrote file")
+  if server.settings.titanRedirect:
+    result = response(StatusRedirect, ($res).replace("titan://", "gemini://"))
+  else:
+    result = response(StatusSuccess, "text/gemini\r\nSuccessfully wrote file")
 
 
 proc serveFile(server: Server, path: string): Future[Response] {.async.} =
