@@ -34,7 +34,7 @@ type Response* = object
   else: discard
 
 {.push inline.}
-proc strResp*(code: RespStatus, meta: string): string =
+proc strResp*(code: RespStatus, meta = ""): string =
   $code & ' ' & meta & "\r\n"
 
 proc response*(code: RespStatus, meta = ""): Response =

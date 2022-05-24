@@ -1,5 +1,5 @@
 import net, asyncnet, asyncdispatch, asyncfile,
-       uri, strutils, strtabs, streams,
+       uri, strutils, strtabs, streams, options,
        os, osproc, md5, mimetypes
 
 import response, config
@@ -18,21 +18,25 @@ type
   Protocol = enum
     ProtocolGemini = "gemini"
     ProtocolTitan = "titan"
+
+  Resource = object
+    uri: Uri
+    rootDir, filePath, resPath: string
   
   Request = object
     client: AsyncSocket
-    uri: Uri
+    res: Resource
 
     case protocol: Protocol
     of ProtocolTitan:
       params: seq[string]
     else: discard
 
-proc requestGemini(client: AsyncSocket, uri: Uri): Request =
-  Request(client: client, uri: uri, protocol: ProtocolGemini)
+proc requestGemini(client: AsyncSocket, res: Resource): Request =
+  Request(client: client, res: res, protocol: ProtocolGemini)
 
-proc requestTitan(client: AsyncSocket, uri: Uri, params: seq[string]): Request =
-  Request(client: client, uri: uri, protocol: ProtocolTitan, params: params)
+proc requestTitan(client: AsyncSocket, res: Resource, params: seq[string]): Request =
+  Request(client: client, res: res, protocol: ProtocolTitan, params: params)
 
 proc initServer(settings: Settings): Server =
   result.ctx = newContext(certFile = settings.certFile,
@@ -50,6 +54,31 @@ proc getUserDir(path: string): (string, string) =
 
   result = (path[2..<i], path[i..^1])
 
+proc parseGeminiResource(server: Server, uri: Uri): Resource =
+  let vhostRoot = server.settings.rootDir / uri.hostname
+  result = Resource(rootDir: vhostRoot, filePath: vhostRoot / uri.path, resPath: uri.path)
+  
+  if uri.path.startsWith("/~"):
+    let (user, newPath) = uri.path.getUserDir
+    result.rootDir = server.settings.homeDir % [user] / uri.hostname
+    result.filePath = result.rootDir / newPath
+  
+  if not result.filePath.startsWith result.rootDir:
+    result.filePath = vhostRoot
+    result.resPath = "/"
+
+proc processGeminiUri(server: Server, req: Request): Option[Response] =
+  if server.settings.vhosts.hasKey req.res.uri.hostname:
+    let zone = server.settings.vhosts[req.res.uri.hostname].findZone(req.res.resPath)
+    result = case zone.ztype
+             of ZoneRedirect:
+               some response(StatusRedirect, zone.val)
+             of ZoneRedirectPerm:
+               some response(StatusRedirectPerm, zone.val)
+             of ZoneCgi:
+               some response(StatusCGI, zone.val)
+             else: none(Response)
+
 proc processCGI(server: Server, req: Request, script: string): Future[void] {.async.} =
   let
     scriptName = script.extractFileName()
@@ -61,11 +90,11 @@ proc processCGI(server: Server, req: Request, script: string): Future[void] {.as
       {
         "SCRIPT_NAME": scriptName,
         "SCRIPT_FILENAME": script,
-        "SERVER_NAME": req.uri.hostname,
+        "SERVER_NAME": req.res.uri.hostname,
         "SERVER_PORT": $server.settings.port,
-        "PATH_INFO": req.uri.path,
-        "QUERY_STRING": req.uri.query,
-        "REQUEST_URI": $req.uri
+        "PATH_INFO": req.res.uri.path,
+        "QUERY_STRING": req.res.uri.query,
+        "REQUEST_URI": $req.res.uri
       }.newStringTable
 
     var p = startProcess(script, env = envTable)
@@ -75,43 +104,13 @@ proc processCGI(server: Server, req: Request, script: string): Future[void] {.as
   
 
 proc processTitanRequest(server: Server, req: Request): Future[Response] {.async.} =
-  if req.params.len < 2:
-    return response(StatusMalformedRequest)
- 
-  # TODO: unduplicate this part
-  let vhostRoot = server.settings.rootDir / req.uri.hostname
-  
-  if not dirExists(vhostRoot):
-    return response(StatusProxyRefused, "PROXY REFUSED: '" & $req.uri & "'.")
-  
-  var
-    rootDir = vhostRoot
-    filePath = rootDir / req.uri.hostname
-      
-  if req.uri.path.startsWith("/~"):
-    let (user, newPath) = req.uri.path.getUserDir
-    rootDir = server.settings.homeDir % [user] / req.uri.hostname
-    filePath = rootDir / newPath
-
-  var resPath = req.uri.path
-  if not filePath.startsWith rootDir:
-    filePath = vhostRoot
-    resPath = "/"
-
-  if server.settings.vhosts.hasKey req.uri.hostname:
-    let zone = server.settings.vhosts[req.uri.hostname].findZone(resPath)
-    case zone.ztype
-    of ZoneRedirect:
-      return response(StatusRedirect, zone.val)
-    of ZoneRedirectPerm:
-      return response(StatusRedirectPerm, zone.val)
-    of ZoneCgi:
-      return response(StatusCGI, zone.val)
-    else: discard
+  let maybeZone = server.processGeminiUri(req)
+  if maybeZone.isSome(): return maybeZone.get()
 
   var 
     size: int
     token: string
+  
   for i in 0..req.params.high:
     if i == 0: # actual path
       continue 
@@ -136,6 +135,7 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
   if token != server.settings.titanPass and server.settings.titanPassRequired:
     return response(StatusNotAuthorised, "Token not recognized")
 
+  var filePath = req.res.filePath
   if dirExists(filePath):
     filePath = filePath / "index.gmi" # assume we want to write index.gmi
 
@@ -184,42 +184,16 @@ proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.}
     result.body.add "\n"
 
 proc processGeminiRequest(server: Server, req: Request): Future[Response] {.async.} =
-  let vhostRoot = server.settings.rootDir / req.uri.hostname
-  
-  if not dirExists(vhostRoot):
-    return response(StatusProxyRefused, "PROXY REFUSED: '" & $req.uri & "'.")
-  
-  var
-    rootDir = vhostRoot
-    filePath = rootDir / req.uri.path
-      
-  if req.uri.path.startsWith("/~"):
-    let (user, newPath) = req.uri.path.getUserDir
-    rootDir = server.settings.homeDir % [user] / req.uri.hostname
-    filePath = rootDir / newPath
+  let maybeZone = server.processGeminiUri(req)
 
-  var resPath = req.uri.path
-  if not filePath.startsWith rootDir:
-    filePath = vhostRoot
-    resPath = "/"
-
-  if server.settings.vhosts.hasKey req.uri.hostname:
-    let zone = server.settings.vhosts[req.uri.hostname].findZone(resPath)
-    case zone.ztype
-    of ZoneRedirect:
-      return response(StatusRedirect, zone.val)
-    of ZoneRedirectPerm:
-      return response(StatusRedirectPerm, zone.val)
-    of ZoneCgi:
-      return response(StatusCGI, zone.val)
-    else: discard
-
-  if fileExists(filePath):
-    return await server.serveFile(filePath)
-  elif dirExists(filePath):
-    return await server.serveDir(filePath, resPath)
+  if maybeZone.isSome():
+    return maybeZone.get()
+  elif fileExists(req.res.filePath):
+    return await server.serveFile(req.res.filePath)
+  elif dirExists(req.res.filePath):
+    return await server.serveDir(req.res.filePath, req.res.resPath)
     
-  return response(StatusNotFound, "'" & req.uri.path & "' NOT FOUND")
+  return response(StatusNotFound, "'" & req.res.uri.path & "' NOT FOUND")
   
 proc handle(server: Server, client: AsyncSocket) {.async.} =
   server.ctx.wrapConnectedSocket(client, handshakeAsServer)
@@ -236,10 +210,12 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
       if uri.hostname.len == 0 or uri.scheme.len == 0:
         await client.send strResp(StatusMalformedRequest, "MALFORMED REQUEST: '" & line & "'.")
 
+      
       case uri.scheme
       of "gemini":
         let
-          req = requestGemini(client, uri)
+          res = server.parseGeminiResource(uri)
+          req = requestGemini(client, res)
           resp = await server.processGeminiRequest(req)
         
         case resp.code
@@ -266,18 +242,22 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
           else: discard
 
       of "titan":
-        let
-          params = split(line, ";")
-          res = params[0].parseUri
-
-          req = requestTitan(client, res, params)
-          resp = await server.processTitanRequest(req)
-        case resp.code
-        of StatusCGI:
-          await server.processCGI(req, resp.meta)
-          
+        let params = split(line, ";")
+        if params.len < 2:
+          await client.send strResp(StatusMalformedRequest)
+        
         else:
-          await client.send strResp(resp.code, resp.meta)
+          let
+            res = server.parseGeminiResource(params[0].parseUri)
+            req = requestTitan(client, res, params)
+            resp = await server.processTitanRequest(req)
+            
+          case resp.code
+          of StatusCGI:
+            await server.processCGI(req, resp.meta)
+          
+          else:
+            await client.send strResp(resp.code, resp.meta)
              
       else:
         await client.send strResp(StatusMalformedRequest, "UNSUPORTED PROTOCOL: '" & uri.scheme & "'.")
