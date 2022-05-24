@@ -118,16 +118,19 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
     let keyVal = req.params[i].split("=")
     if keyVal.len != 2:
       return response(StatusMalformedRequest, "Bad parameter: " & req.params[i])
+    
     if keyVal[0] == "size":
       try:
         size = keyVal[1].parseInt()
       except ValueError:
         return response(StatusMalformedRequest, "Size " & keyVal[1] & " is invalid")
+    
     if keyVal[0] == "token":
       token = keyVal[1].decodeUrl
 
   if size == 0:
     return response(StatusMalformedRequest, "No file size specified")
+  
   if size > server.settings.titanUploadLimit:
     return response(StatusError,
       "File size exceeds limit of " & $server.settings.titanUploadLimit & " bytes.")
@@ -186,14 +189,17 @@ proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.}
 proc processGeminiRequest(server: Server, req: Request): Future[Response] {.async.} =
   let maybeZone = server.processGeminiUri(req)
 
-  if maybeZone.isSome():
-    return maybeZone.get()
-  elif fileExists(req.res.filePath):
-    return await server.serveFile(req.res.filePath)
-  elif dirExists(req.res.filePath):
-    return await server.serveDir(req.res.filePath, req.res.resPath)
+  result =
+    if maybeZone.isSome(): maybeZone.get()
     
-  return response(StatusNotFound, "'" & req.res.uri.path & "' NOT FOUND")
+    elif fileExists(req.res.filePath):
+      await server.serveFile(req.res.filePath)
+    
+    elif dirExists(req.res.filePath):
+      await server.serveDir(req.res.filePath, req.res.resPath)
+    
+    else:
+      response(StatusNotFound, "'" & req.res.uri.path & "' NOT FOUND")
   
 proc handle(server: Server, client: AsyncSocket) {.async.} =
   server.ctx.wrapConnectedSocket(client, handshakeAsServer)
