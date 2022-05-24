@@ -191,13 +191,11 @@ proc processGeminiRequest(server: Server, req: Request): Future[Response] {.asyn
 
   result =
     if maybeZone.isSome(): maybeZone.get()
-    
     elif fileExists(req.res.filePath):
       await server.serveFile(req.res.filePath)
-    
     elif dirExists(req.res.filePath):
       await server.serveDir(req.res.filePath, req.res.resPath)
-    
+
     else:
       response(StatusNotFound, "'" & req.res.uri.path & "' NOT FOUND")
   
