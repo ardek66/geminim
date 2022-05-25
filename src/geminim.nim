@@ -261,7 +261,7 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
             await client.send strResp(resp.code, resp.meta)
              
       else:
-        await client.send strResp(StatusMalformedRequest, "UNSUPORTED PROTOCOL: '" & uri.scheme & "'.")
+        await client.send strResp(StatusProxyRefused, "UNSUPORTED PROTOCOL: '" & uri.scheme & "'.")
           
   except:
     await client.send TempErrorResp
