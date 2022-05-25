@@ -111,10 +111,7 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
     size: int
     token: string
   
-  for i in 0..req.params.high:
-    if i == 0: # actual path
-      continue 
-
+  for i in 1..req.params.high:
     let keyVal = req.params[i].split("=")
     if keyVal.len != 2:
       return response(StatusMalformedRequest, "Bad parameter: " & req.params[i])
