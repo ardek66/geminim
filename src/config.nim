@@ -27,6 +27,9 @@ type
     vhosts*: Table[string, VHost]
     homeDir*: string
     dirHeader*: string
+    titanSettings*: TitanSettings
+
+  TitanSettings* = object
     titanPass*: string
     titanPassRequired*: bool
     titanUploadLimit*: int
@@ -118,10 +121,12 @@ proc readSettings*(path: string): Settings =
     keyFile: "mykey.pem",
     homeDir: defaultHome,
     dirHeader: "header.gemini",
-    titanPass: "titanpassword",
-    titanPassRequired: true,
-    titanUploadLimit: 10485760,
-    titanRedirect: true)
+    titanSettings: TitanSettings(
+      titanPass: "titanpassword",
+      titanPassRequired: true,
+      titanUploadLimit: 10485760,
+      titanRedirect: true)
+  )
 
   var f = newFilestream(path, fmRead)
   if f != nil:
@@ -148,10 +153,12 @@ proc readSettings*(path: string): Settings =
           of "keyfile": result.keyfile = e.value
           of "homedir": result.homeDir = e.value
           of "dirheader": result.dirHeader = e.value
-          of "titanpass": result.titanPass = e.value
-          of "titanpassrequired": result.titanPassRequired = e.value.parseBool
-          of "titanuploadlimit": result.titanUploadLimit = e.value.parseInt
-          of "titanredirect": result.titanRedirect = e.value.parseBool
+        elif section == "titan":
+          case e.key.toLowerAscii
+          of "titanpass": result.titanSettings.titanPass = e.value
+          of "titanpassrequired": result.titanSettings.titanPassRequired = e.value.parseBool
+          of "titanuploadlimit": result.titanSettings.titanUploadLimit = e.value.parseInt
+          of "titanredirect": result.titanSettings.titanRedirect = e.value.parseBool
         else:
           let zoneType =
             case keyval[1]

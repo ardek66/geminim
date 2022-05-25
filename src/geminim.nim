@@ -131,11 +131,14 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
   if size == 0:
     return response(StatusMalformedRequest, "No file size specified")
   
-  if size > server.settings.titanUploadLimit:
-    return response(StatusError,
-      "File size exceeds limit of " & $server.settings.titanUploadLimit & " bytes.")
+  let titanSettings = server.settings.titanSettings
 
-  if token != server.settings.titanPass and server.settings.titanPassRequired:
+  if size > titanSettings.titanUploadLimit:
+    return response(StatusError,
+      "File size exceeds limit of " &
+      $titanSettings.titanUploadLimit & " bytes.")
+
+  if token != titanSettings.titanPass and titanSettings.titanPassRequired:
     return response(StatusNotAuthorised, "Token not recognized")
 
   var filePath = req.res.filePath
@@ -165,7 +168,7 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
     echo getCurrentExceptionMsg()
     return response(StatusError, "")
 
-  if server.settings.titanRedirect:
+  if titanSettings.titanRedirect:
     result = response(StatusRedirect, req.params[0].replace("titan://", "gemini://"))
   else:
     result = response(StatusSuccess, "text/gemini\r\nSuccessfully wrote file")
