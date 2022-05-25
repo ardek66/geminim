@@ -26,6 +26,7 @@ I also provide a Nix package. To get into the build shell environment, just run:
 nix-shell
 #+END_EXAMPLE
 
-** Todo
-+ Reverse proxying
-+ Client certificate authentication(almost there)
+** TODO Planned features [0/3]
+1. [ ] Client certificate authentication (almost there)
+2. [ ] HTTP(S) mirroring
+3. [ ] Reverse proxying support
