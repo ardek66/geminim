@@ -149,17 +149,9 @@ proc readSettings*(path: string): Settings =
           of "homedir": result.homeDir = e.value
           of "dirheader": result.dirHeader = e.value
           of "titanpass": result.titanPass = e.value
-          of "titanpassrequired":
-            if e.value == "false":
-              result.titanPassRequired = false
-            else:
-              result.titanPassRequired = true
+          of "titanpassrequired": result.titanPassRequired = e.value.parseBool
           of "titanuploadlimit": result.titanUploadLimit = e.value.parseInt
-          of "titanredirect":
-            if e.value == "false":
-              result.titanRedirect = false
-            else:
-              result.titanRedirect = true
+          of "titanredirect": result.titanRedirect = e.value.parseBool
         else:
           let zoneType =
             case keyval[1]

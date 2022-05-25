@@ -139,7 +139,7 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
     return response(StatusNotAuthorised, "Token not recognized")
 
   var filePath = req.res.filePath
-  let (parent, _ )= filePath.splitPath
+  let (parent, _ ) = filePath.splitPath
 
   if dirExists(parent):
     if dirExists(filePath): # We're writing index.gmi in an existing directory
@@ -147,9 +147,13 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
   else: # we're writing a file in a new directory
     try:
       createDir(parent)
-    except:
+    except OSError:
       return response(StatusError,
-        "Parent directory could not be created for: " & $req.res.resPath)
+        "Error writing to: " & $req.res.resPath)
+    except IOError:
+      return response(StatusError,
+        "Could not create path: " & $req.res.resPath &
+        ". Usually this means one of the \"directories\" in the path is actually a file.")
 
   let buffer = await req.client.recv(size)
   try:
