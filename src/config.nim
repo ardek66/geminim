@@ -30,10 +30,10 @@ type
     titanSettings*: TitanSettings
 
   TitanSettings* = object
-    titanPass*: string
-    titanPassRequired*: bool
-    titanUploadLimit*: int
-    titanRedirect*: bool
+    password*: string
+    passwordRequired*: bool
+    uploadLimit*: int
+    redirect*: bool
 
 const defaultHome =
   when defined(posix): "/home/$#/"
@@ -122,10 +122,10 @@ proc readSettings*(path: string): Settings =
     homeDir: defaultHome,
     dirHeader: "header.gemini",
     titanSettings: TitanSettings(
-      titanPass: "titanpassword",
-      titanPassRequired: true,
-      titanUploadLimit: 10485760,
-      titanRedirect: true)
+      password: "titanpassword",
+      passwordRequired: true,
+      uploadLimit: 10485760,
+      redirect: true)
   )
 
   var f = newFilestream(path, fmRead)
@@ -155,10 +155,10 @@ proc readSettings*(path: string): Settings =
           of "dirheader": result.dirHeader = e.value
         elif section == "titan":
           case e.key.toLowerAscii
-          of "titanpass": result.titanSettings.titanPass = e.value
-          of "titanpassrequired": result.titanSettings.titanPassRequired = e.value.parseBool
-          of "titanuploadlimit": result.titanSettings.titanUploadLimit = e.value.parseInt
-          of "titanredirect": result.titanSettings.titanRedirect = e.value.parseBool
+          of "password": result.titanSettings.password = e.value
+          of "passwordrequired": result.titanSettings.passwordRequired = e.value.parseBool
+          of "uploadlimit": result.titanSettings.uploadLimit = e.value.parseInt
+          of "redirect": result.titanSettings.redirect = e.value.parseBool
         else:
           let zoneType =
             case keyval[1]
