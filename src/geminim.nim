@@ -128,16 +128,31 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
   if size == 0:
     return response(StatusMalformedRequest, "No file size specified")
   
-  if size > server.settings.titanUploadLimit:
-    return response(StatusError,
-      "File size exceeds limit of " & $server.settings.titanUploadLimit & " bytes.")
+  let titanSettings = server.settings.titanSettings
 
-  if token != server.settings.titanPass and server.settings.titanPassRequired:
+  if size > titanSettings.uploadLimit:
+    return response(StatusError,
+      "File size exceeds limit of " &
+      $titanSettings.uploadLimit & " bytes.")
+
+  if token != titanSettings.password and titanSettings.passwordRequired:
     return response(StatusNotAuthorised, "Token not recognized")
 
   var filePath = req.res.filePath
-  if dirExists(filePath):
-    filePath = filePath / "index.gmi" # assume we want to write index.gmi
+  let (parent, _ ) = filePath.splitPath
+
+  try:
+    createDir(parent) # will simply succeed if it already exists
+  except OSError:
+    return response(StatusError,
+      "Error writing to: " & $req.res.resPath)
+  except IOError:
+    return response(StatusError,
+      "Could not create path: " & $req.res.resPath &
+      ". Usually this means one of the \"directories\" in the path is actually a file.")
+
+  if dirExists(filePath): # We're writing index.gmi in an existing directory
+    filePath = filePath / "index.gmi"
 
   let buffer = await req.client.recv(size)
   try:
@@ -149,7 +164,11 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
     echo getCurrentExceptionMsg()
     return response(StatusError, "")
 
-  result = response(StatusSuccess, "text/gemini\r\nSuccessfully wrote file")
+  result =
+    if titanSettings.redirect:
+      response(StatusRedirect, req.params[0].replace("titan://", "gemini://"))
+    else:
+      response(StatusSuccess, "text/gemini\r\nSuccessfully wrote file")
 
 
 proc serveFile(server: Server, path: string): Future[Response] {.async.} =
