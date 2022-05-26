@@ -56,7 +56,7 @@ proc getUserDir(path: string): (string, string) =
 
 proc parseGeminiResource(server: Server, uri: Uri): Resource =
   let vhostRoot = server.settings.rootDir / uri.hostname
-  result = Resource(rootDir: vhostRoot, filePath: vhostRoot / uri.path, resPath: uri.path)
+  result = Resource(rootDir: vhostRoot, filePath: vhostRoot / uri.path, resPath: uri.path, uri: uri)
   
   if uri.path.startsWith("/~"):
     let (user, newPath) = uri.path.getUserDir
