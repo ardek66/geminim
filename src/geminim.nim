@@ -228,67 +228,69 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
 
       if(line.len > 1024):
         await client.send strResp(StatusMalformedRequest, "REQUEST IS TOO LONG.")
-      
-      let uri = parseUri(line)
-      if uri.hostname.len == 0 or uri.scheme.len == 0:
-        await client.send strResp(StatusMalformedRequest, "MALFORMED REQUEST: '" & line & "'.")
 
-      
-      case uri.scheme
-      of "gemini":
-        let
-          res = server.parseGeminiResource(uri)
-          req = requestGemini(client, res)
-          resp = await server.processGeminiRequest(req)
-        
-        case resp.code
-        of StatusNull:
-          await client.send resp.meta
-          
-        of StatusCGI:
-          await server.processCGI(req, resp.meta)
-        
-        else:
-          await client.send strResp(resp.code, resp.meta)
-      
-          case resp.code
-          of StatusSuccess:
-            while true:
-              let buffer = await resp.file.read(BufferSize)
-              if buffer.len < 1: break
-              await client.send buffer
-            resp.file.close()
-            
-          of StatusSuccessDir:
-            await client.send resp.body
-          
-          else: discard
-
-      of "titan":
-        let params = split(line, ";")
-        if params.len < 2:
-          await client.send strResp(StatusMalformedRequest)
-        
-        else:
-          let
-            res = server.parseGeminiResource(params[0].parseUri)
-            req = requestTitan(client, res, params)
-            resp = await server.processTitanRequest(req)
-            
-          case resp.code
-          of StatusCGI:
-            await server.processCGI(req, resp.meta)
-          
-          else:
-            await client.send strResp(resp.code, resp.meta)
-             
       else:
-        await client.send strResp(StatusProxyRefused, "UNSUPORTED PROTOCOL: '" & uri.scheme & "'.")
+        let uri = parseUri(line)
+        
+        if uri.hostname.len == 0 or uri.scheme.len == 0:
+          await client.send strResp(StatusMalformedRequest, "MALFORMED REQUEST: '" & line & "'.")
+
+        else:
+          case uri.scheme
+          of "gemini":
+            let
+              res = server.parseGeminiResource(uri)
+              req = requestGemini(client, res)
+              resp = await server.processGeminiRequest(req)
+        
+            case resp.code
+            of StatusNull:
+              await client.send resp.meta
+          
+            of StatusCGI:
+              await server.processCGI(req, resp.meta)
+        
+            else:
+              await client.send strResp(resp.code, resp.meta)
+      
+            case resp.code
+            of StatusSuccess:
+              while true:
+                let buffer = await resp.file.read(BufferSize)
+                if buffer.len < 1: break
+                await client.send buffer
+              resp.file.close()
+            
+            of StatusSuccessDir:
+              await client.send resp.body
+          
+            else: discard
+
+          of "titan":
+            let params = split(line, ";")
+            if params.len < 2:
+              await client.send strResp(StatusMalformedRequest)
+        
+            else:
+              let
+                res = server.parseGeminiResource(params[0].parseUri)
+                req = requestTitan(client, res, params)
+                resp = await server.processTitanRequest(req)
+            
+              case resp.code
+              of StatusCGI:
+                await server.processCGI(req, resp.meta)
+          
+              else:
+                await client.send strResp(resp.code, resp.meta)
+             
+          else:
+              await client.send strResp(StatusProxyRefused, "UNSUPORTED PROTOCOL: '" & uri.scheme & "'.")
           
   except:
     await client.send TempErrorResp
     echo getCurrentExceptionMsg()
-      
+
   client.close()
 
 proc serve(server: Server) {.async.} =
