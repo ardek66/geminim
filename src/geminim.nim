@@ -68,16 +68,19 @@ proc parseGeminiResource(server: Server, uri: Uri): Resource =
     result.resPath = "/"
 
 proc processGeminiUri(server: Server, req: Request): Option[Response] =
-  if server.settings.vhosts.hasKey req.res.uri.hostname:
-    let zone = server.settings.vhosts[req.res.uri.hostname].findZone(req.res.resPath)
-    result = case zone.ztype
-             of ZoneRedirect:
-               some response(StatusRedirect, zone.val)
-             of ZoneRedirectPerm:
-               some response(StatusRedirectPerm, zone.val)
-             of ZoneCgi:
-               some response(StatusCGI, zone.val)
-             else: none(Response)
+  let hostname = req.res.uri.hostname
+  
+  if server.settings.vhosts.hasKey hostname:
+    let zone = server.settings.vhosts[hostname].findZone(req.res.resPath)
+    result =
+      case zone.ztype
+      of ZoneRedirect:
+        some response(StatusRedirect, zone.val)
+      of ZoneRedirectPerm:
+        some response(StatusRedirectPerm, zone.val)
+      of ZoneCgi:
+        some response(StatusCGI, zone.val)
+      else: none(Response)
 
 proc processCGI(server: Server, req: Request, script: string): Future[void] {.async.} =
   let
