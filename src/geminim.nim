@@ -88,7 +88,8 @@ proc processCGI(server: Server, req: Request, script: string): Future[void] {.as
     scriptName = script.extractFileName()
 
   if not fileExists(script):
-    await req.client.send strResp(StatusNotFound, &"The CGI script {scriptName} could not be found.")
+    await req.client.send $response(StatusNotFound,
+                                    &"The CGI script '{scriptName}' could not be found.")
   else:
     let envTable =
       {
@@ -118,13 +119,14 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
   for i in 1..req.params.high:
     let keyVal = req.params[i].split("=")
     if keyVal.len != 2:
-      return response(StatusMalformedRequest, &"Bad parameter: {req.params[1]}.")
+      return response(StatusMalformedRequest, &"Bad parameter: '{req.params[i]}'.")
     
     if keyVal[0] == "size":
       try:
         size = keyVal[1].parseInt()
+        if size <= 0: raise newException(ValueError, "Negative size")
       except ValueError:
-        return response(StatusMalformedRequest, &"Size {keyVal[1]} is invalid.")
+        return response(StatusMalformedRequest, &"Size '{keyVal[1]}' is invalid.")
     
     if keyVal[0] == "token":
       token = keyVal[1].decodeUrl
@@ -146,9 +148,9 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
   try:
     createDir(parent) # will simply succeed if it already exists
   except OSError:
-    return response(StatusError, &"Error writing to: {req.res.resPath}.")
+    return response(StatusError, &"Error writing to: '{req.res.resPath}'.")
   except IOError:
-    return response(StatusError, &"Could not create path: {req.res.resPath}.")
+    return response(StatusError, &"Could not create path: '{req.res.resPath}'.")
 
   if dirExists(filePath): # We're writing index.gmi in an existing directory
     filePath = filePath / "index.gmi"
@@ -163,12 +165,14 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
     echo getCurrentExceptionMsg()
     return response(StatusError, "")
 
-  result =
-    if titanSettings.redirect:
-      response(StatusRedirect, req.params[0].replace("titan://", "gemini://"))
-    else:
-      response(StatusSuccess, "text/gemini\r\nSuccessfully wrote file.")
+  if titanSettings.redirect:
+    var newUri = req.res.uri
+    newUri.scheme = "gemini"
 
+    return response(StatusRedirect, $newUri)
+  else:
+      result = response(StatusSuccessOther, "text/gemini")
+      result.body = &"Succesfully wrote file '{req.res.resPath}'."
 
 proc serveFile(server: Server, path: string): Future[Response] {.async.} =
   result = response(StatusSuccess, m.getMimetype(path.splitFile.ext))
@@ -178,7 +182,7 @@ proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.}
   template link(path: string): string =
     "=> " / path
 
-  result = response(StatusSuccessDir, "text/gemini")
+  result = response(StatusSuccessOther, "text/gemini")
   
   let headerPath = path / server.settings.dirHeader
   if fileExists(headerPath):
@@ -212,7 +216,7 @@ proc processGeminiRequest(server: Server, req: Request): Future[Response] {.asyn
       await server.serveDir(req.res.filePath, req.res.resPath)
 
     else:
-      response(StatusNotFound, &"'{req.res.uri.path} was not found.'")
+      response(StatusNotFound, &"'{req.res.uri.path}' was not found.")
   
 proc handle(server: Server, client: AsyncSocket) {.async.} =
   server.ctx.wrapConnectedSocket(client, handshakeAsServer)
@@ -223,13 +227,13 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
       echo line
 
       if(line.len > 1024):
-        await client.send strResp(StatusMalformedRequest, "Request is too long.")
+        await client.send $response(StatusMalformedRequest, "Request is too long.")
 
       else:
         let uri = parseUri(line)
         
         if uri.hostname.len == 0 or uri.scheme.len == 0:
-          await client.send strResp(StatusMalformedRequest, "Request '{line}' is malformed.")
+          await client.send $response(StatusMalformedRequest, "Request '{line}' is malformed.")
 
         else:
           case uri.scheme
@@ -247,7 +251,7 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
               await server.processCGI(req, resp.meta)
         
             else:
-              await client.send strResp(resp.code, resp.meta)
+              await client.send $resp
       
             case resp.code
             of StatusSuccess:
@@ -257,7 +261,7 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
                 await client.send buffer
               resp.file.close()
             
-            of StatusSuccessDir:
+            of StatusSuccessOther:
               await client.send resp.body
           
             else: discard
@@ -265,7 +269,7 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
           of "titan":
             let params = split(line, ";")
             if params.len < 2:
-              await client.send strResp(StatusMalformedRequest)
+              await client.send $response(StatusMalformedRequest)
         
             else:
               let
@@ -278,13 +282,13 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
                 await server.processCGI(req, resp.meta)
           
               else:
-                await client.send strResp(resp.code, resp.meta)
+                await client.send $resp
              
           else:
-              await client.send strResp(StatusProxyRefused, &"The protocol {uri.scheme} is unsuported.")
+              await client.send $response(StatusProxyRefused, &"The protocol '{uri.scheme}' is unsuported.")
           
   except:
-    await client.send TempErrorResp
+    await client.send $response(StatusTempError, "Internal error.")
     echo getCurrentExceptionMsg()
 
   client.close()

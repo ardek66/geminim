@@ -7,7 +7,7 @@ type RespStatus* = enum
   StatusInputRequired = "10"
   StatusSensitiveInput = "11"
   StatusSuccess = "20"
-  StatusSuccessDir = "21"
+  StatusSuccessOther = "21"
   StatusRedirect = "30"
   StatusRedirectPerm = "31"
   StatusTempError = "40"
@@ -29,18 +29,12 @@ type Response* = object
   case code*: RespStatus
   of StatusSuccess:
     file*: AsyncFile
-  of StatusSuccessDir:
+  of StatusSuccessOther:
     body*: string
   else: discard
 
-{.push inline.}
-proc strResp*(code: RespStatus, meta = ""): string =
-  $code & ' ' & meta & "\r\n"
-
 proc response*(code: RespStatus, meta = ""): Response =
   Response(code: code, meta: meta)
-{.pop.}
 
-const
-  SuccessResp* = strResp(StatusSuccess, "text/gemini")
-  TempErrorResp* = strResp(StatusTempError, "INTERNAL ERROR")
+proc `$`*(resp: Response): string =
+  $resp.code & ' ' & resp.meta & "\r\n"
