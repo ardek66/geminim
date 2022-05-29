@@ -8,6 +8,7 @@ type
     ZoneRedirectPerm
     ZoneCGI
     ZoneInputCGI
+    ZoneCert
 
   Zone* = object
     key*, val*: string
@@ -166,6 +167,7 @@ proc readSettings*(path: string): Settings =
             of "permRedirectZones": ZoneRedirectPerm
             of "cgiZones": ZoneCGI
             of "inputCgiZones": ZoneInputCGI
+            of "restrictedZones": ZoneCert
             else: ZoneNull
 
           if zoneType == ZoneNull:

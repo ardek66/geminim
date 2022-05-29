@@ -3,7 +3,7 @@ import net, asyncnet, asyncdispatch, asyncfile,
        options,
        os, osproc, md5, mimetypes
 
-import response, config
+import response, tls, config
 
 var m = newMimeTypes()
 m.register(ext = "gemini", mimetype = "text/gemini")
@@ -26,23 +26,25 @@ type
   
   Request = object
     client: AsyncSocket
+    cert: string
+    
     res: Resource
-
     case protocol: Protocol
     of ProtocolTitan:
       params: seq[string]
     else: discard
 
-proc requestGemini(client: AsyncSocket, res: Resource): Request =
-  Request(client: client, res: res, protocol: ProtocolGemini)
+proc requestGemini(client: AsyncSocket, cert: string, res: Resource): Request =
+  Request(client: client, cert: cert, res: res, protocol: ProtocolGemini)
 
-proc requestTitan(client: AsyncSocket, res: Resource, params: seq[string]): Request =
-  Request(client: client, res: res, protocol: ProtocolTitan, params: params)
+proc requestTitan(client: AsyncSocket, cert: string, res: Resource, params: seq[string]): Request =
+  Request(client: client, cert: cert, res: res, protocol: ProtocolTitan, params: params)
 
 proc initServer(settings: Settings): Server =
   result.ctx = newContext(certFile = settings.certFile,
                           keyFile = settings.keyFile)
-
+  result.ctx.setVerifyCallback(verify_cb)
+  
   result.settings = settings
   result.certMD5 = readFile(settings.certFile).getMD5()
   result.socket = newAsyncSocket()
@@ -81,6 +83,12 @@ proc processGeminiUri(server: Server, req: Request): Option[Response] =
         some response(StatusRedirectPerm, zone.val)
       of ZoneCgi:
         some response(StatusCGI, zone.val)
+      of ZoneCert:
+        if req.cert.len == 0:
+          some response(StatusCertificateRequired, "A certificate is required to continue.")
+        elif req.cert.
+        else: none(Response)
+      
       else: none(Response)
 
 proc processCGI(server: Server, req: Request, script: string): Future[void] {.async.} =
@@ -221,94 +229,104 @@ proc processGeminiRequest(server: Server, req: Request): Future[Response] {.asyn
 proc handle(server: Server, client: AsyncSocket) {.async.} =
   server.ctx.wrapConnectedSocket(client, handshakeAsServer)
   
+  let line = await client.recvLine()
+  
+  if line.len == 0:
+    await client.send $response(StatusMalformedRequest, "Empty request.")
+    return
+  
+    
+  if(line.len > 1024):
+    await client.send $response(StatusMalformedRequest, "Request is too long.")
+    return
+
+  let uri = parseUri(line)
+  if uri.hostname.len == 0 or uri.scheme.len == 0:
+    await client.send $response(StatusMalformedRequest, "Request '{line}' is malformed.")
+    return
+
+  var cert: string
   try:
-    let line = await client.recvLine()
-    if line.len > 0:
-      echo line
-
-      if(line.len > 1024):
-        await client.send $response(StatusMalformedRequest, "Request is too long.")
-
-      else:
-        let uri = parseUri(line)
+    cert = client.getPeerCertificate()
+  except ValueError:
+    await client.send $response(StatusNotValid, "Could not decode the provided certificate.")
+    return
+  except SSLError:
+    await client.send $response(StatusNotValid, "The provided certificate is invalid or has expired.")
+    return
+    
+  case uri.scheme
+  of "gemini":
+    let
+      res = server.parseGeminiResource(uri)
+      req = requestGemini(client, cert, res)
+      resp = await server.processGeminiRequest(req)
         
-        if uri.hostname.len == 0 or uri.scheme.len == 0:
-          await client.send $response(StatusMalformedRequest, "Request '{line}' is malformed.")
-
-        else:
-          case uri.scheme
-          of "gemini":
-            let
-              res = server.parseGeminiResource(uri)
-              req = requestGemini(client, res)
-              resp = await server.processGeminiRequest(req)
-        
-            case resp.code
-            of StatusNull:
-              await client.send resp.meta
+    case resp.code
+    of StatusNull:
+      await client.send resp.meta
           
-            of StatusCGI:
-              await server.processCGI(req, resp.meta)
+    of StatusCGI:
+      await server.processCGI(req, resp.meta)
         
-            else:
-              await client.send $resp
+    else:
+      await client.send $resp
       
-            case resp.code
-            of StatusSuccess:
-              while true:
-                let buffer = await resp.file.read(BufferSize)
-                if buffer.len < 1: break
-                await client.send buffer
-              resp.file.close()
+      case resp.code
+      of StatusSuccess:
+        while true:
+          let buffer = await resp.file.read(BufferSize)
+          if buffer.len < 1: break
+          await client.send buffer
+        resp.file.close()
             
-            of StatusSuccessOther:
-              await client.send resp.body
+      of StatusSuccessOther:
+        await client.send resp.body
           
-            else: discard
+      else: return
 
-          of "titan":
-            let params = split(line, ";")
-            if params.len < 2:
-              await client.send $response(StatusMalformedRequest)
+  of "titan":
+    let params = split(line, ";")
+    if params.len < 2:
+      await client.send $response(StatusMalformedRequest)
         
-            else:
-              let
-                res = server.parseGeminiResource(params[0].parseUri)
-                req = requestTitan(client, res, params)
-                resp = await server.processTitanRequest(req)
+    else:
+      let
+        res = server.parseGeminiResource(params[0].parseUri)
+        req = requestTitan(client, cert, res, params)
+        resp = await server.processTitanRequest(req)
             
-              case resp.code
-              of StatusCGI:
-                await server.processCGI(req, resp.meta)
+      case resp.code
+      of StatusCGI:
+        await server.processCGI(req, resp.meta)
           
-              else:
-                await client.send $resp
+      else:
+        await client.send $resp
              
-          else:
-              await client.send $response(StatusProxyRefused, &"The protocol '{uri.scheme}' is unsuported.")
-          
-  except:
-    await client.send $response(StatusTempError, "Internal error.")
-    echo getCurrentExceptionMsg()
-
-  client.close()
+  else:
+    await client.send $response(StatusProxyRefused, &"The protocol '{uri.scheme}' is unsuported.")
 
 proc serve(server: Server) {.async.} =
   server.ctx.sessionIdContext = server.certMD5
-  server.ctx.wrapSocket(server.socket)
-  
   server.socket.setSockOpt(OptReuseAddr, true)
   server.socket.setSockOpt(OptReusePort, true)
   server.socket.bindAddr(Port(server.settings.port))
+
+  server.ctx.wrapSocket(server.socket)
   server.socket.listen()
 
   while true:
-    try:
-      let client = await server.socket.accept()
-      yield server.handle(client)
-    except:
-      echo getCurrentExceptionMsg()
+    let
+      client = await server.socket.accept()
+      future = server.handle(client)
 
+    yield future
+    if future.failed:
+      await client.send $response(StatusTempError, "Internal error.")
+      echo future.error.msg
+
+    client.close()
+      
 proc main() =
   if paramCount() != 1:
     echo "USAGE:"
