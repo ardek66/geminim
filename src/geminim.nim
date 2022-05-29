@@ -86,7 +86,6 @@ proc processGeminiUri(server: Server, req: Request): Option[Response] =
       of ZoneCert:
         if req.cert.len == 0:
           some response(StatusCertificateRequired, "A certificate is required to continue.")
-        elif req.cert.
         else: none(Response)
       
       else: none(Response)
@@ -236,7 +235,7 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
     return
   
     
-  if(line.len > 1024):
+  if line.len > 1024:
     await client.send $response(StatusMalformedRequest, "Request is too long.")
     return
 
