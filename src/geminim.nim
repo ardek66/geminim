@@ -43,7 +43,7 @@ proc requestTitan(client: AsyncSocket, cert: string, res: Resource, params: seq[
 proc initServer(settings: Settings): Server =
   result.ctx = newContext(certFile = settings.certFile,
                           keyFile = settings.keyFile)
-  result.ctx.setVerifyCallback(verify_cb)
+  result.ctx.prepareGeminiCtx()
   
   result.settings = settings
   result.certMD5 = readFile(settings.certFile).getMD5()
