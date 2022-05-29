@@ -230,20 +230,6 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
   
   let line = await client.recvLine()
   
-  if line.len == 0:
-    await client.send $response(StatusMalformedRequest, "Empty request.")
-    return
-  
-    
-  if line.len > 1024:
-    await client.send $response(StatusMalformedRequest, "Request is too long.")
-    return
-
-  let uri = parseUri(line)
-  if uri.hostname.len == 0 or uri.scheme.len == 0:
-    await client.send $response(StatusMalformedRequest, "Request '{line}' is malformed.")
-    return
-
   var cert: string
   try:
     cert = client.getPeerCertificate()
@@ -252,6 +238,19 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
     return
   except SSLError:
     await client.send $response(StatusNotValid, "The provided certificate is invalid or has expired.")
+    return
+
+  if line.len == 0:
+    await client.send $response(StatusMalformedRequest, "Empty request.")
+    return
+  
+  if line.len > 1024:
+    await client.send $response(StatusMalformedRequest, "Request is too long.")
+    return
+
+  let uri = parseUri(line)
+  if uri.hostname.len == 0 or uri.scheme.len == 0:
+    await client.send $response(StatusMalformedRequest, "Request '{line}' is malformed.")
     return
     
   case uri.scheme
