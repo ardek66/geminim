@@ -14,6 +14,7 @@ GemiNim is a simple Nim server for the [[https://gemini.circumlunar.space/][Gemi
 + CGI
 + Per-user directories
 + Directory listing
++ Support for uploading files via Titan
 
 ** Developing
 You can build GemiNim by running:
@@ -26,7 +27,7 @@ I also provide a Nix package. To get into the build shell environment, just run:
 nix-shell
 #+END_EXAMPLE
 
-** TODO Planned features [0/3]
-1. [ ] Client certificate authentication (almost there)
+** TODO Planned features [1/3]
+1. [X] Client certificate authentication (is implemented but highly experimental)
 2. [ ] HTTP(S) mirroring
 3. [ ] Reverse proxying support
