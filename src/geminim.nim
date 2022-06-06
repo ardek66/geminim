@@ -26,7 +26,7 @@ type
   
   Request = object
     client: AsyncSocket
-    cert: string
+    cert: Certificate
     
     res: Resource
     case protocol: Protocol
@@ -34,10 +34,10 @@ type
       params: seq[string]
     else: discard
 
-proc requestGemini(client: AsyncSocket, cert: string, res: Resource): Request =
+proc requestGemini(client: AsyncSocket, cert: Certificate, res: Resource): Request =
   Request(client: client, cert: cert, res: res, protocol: ProtocolGemini)
 
-proc requestTitan(client: AsyncSocket, cert: string, res: Resource, params: seq[string]): Request =
+proc requestTitan(client: AsyncSocket, cert: Certificate, res: Resource, params: seq[string]): Request =
   Request(client: client, cert: cert, res: res, protocol: ProtocolTitan, params: params)
 
 proc initServer(settings: Settings): Server =
@@ -229,15 +229,21 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
   server.ctx.wrapConnectedSocket(client, handshakeAsServer)
   
   let line = await client.recvLine()
-  
-  var cert: string
+
+  case client.getVerifyResult()
+  of CertOK: discard
+  of CertExpired:
+    await client.send $response(StatusExpired, "The provided certificate has expired.")
+    return
+  of CertInvalid:
+    await client.send $response(StatusInvalid, "The provided certificate is invalid.")
+    return
+
+  var cert: Certificate
   try:
     cert = client.getPeerCertificate()
   except ValueError:
-    await client.send $response(StatusNotValid, "Could not decode the provided certificate.")
-    return
-  except SSLError:
-    await client.send $response(StatusNotValid, "The provided certificate is invalid or has expired.")
+    await client.send $response(StatusInvalid, "Could not decode the provided certificate.")
     return
 
   if line.len == 0:

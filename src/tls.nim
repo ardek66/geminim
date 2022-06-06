@@ -1,6 +1,12 @@
 import openssl, strutils, net, asyncnet
 export openssl
 
+type CertError* = enum
+  CertOK
+  
+  CertExpired
+  CertInvalid
+    
 proc PEM_read_bio_X509(bio: BIO, x: PX509, password_cb: cint, u: pointer): PX509 {.importc, dynlib: DLLSSLName.}
 proc SSL_CTX_set_verify_depth(ctx: SslCtx, depth: cint) {.importc, dynlib: DLLSSLName.}
 proc verify_cb(preverify_ok: int, ctx: pointer): int{.cdecl.} = 1
@@ -28,13 +34,17 @@ proc getX509Cert*(data: string): string =
   if x509 == nil: return
   return x509.i2d_X509
 
-proc getPeerCertificate*(socket: AsyncSocket): string =
+proc getVerifyResult*(socket: AsyncSocket): CertError =
   let err = socket.sslHandle.SSL_get_verify_result()
-  if err > 0 and err != X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT:
-    raise newException(SSLError, "Certificate invalid or has expired")
 
-  return socket.sslHandle.SSL_get_peer_certificate.i2d_X509
+  result =
+    case err
+    of X509_V_OK, X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT: CertOK
+    of X509_V_ERR_CERT_HAS_EXPIRED: CertExpired
+    else: CertInvalid
 
+proc getPeerCertificate*(socket: AsyncSocket): Certificate =
+  socket.sslHandle.SSL_get_peer_certificate.i2d_X509
 
 proc readAuthorised*(data: string): seq[string] =
   const

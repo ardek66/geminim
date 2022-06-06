@@ -22,7 +22,8 @@ type RespStatus* = enum
   StatusMalformedRequest = "59"
   StatusCertificateRequired = "60"
   StatusNotAuthorised = "61"
-  StatusNotValid = "62"
+  StatusExpired = "62"
+  StatusInvalid = "63"
 
 type Response* = object
   meta*: string
