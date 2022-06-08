@@ -83,12 +83,11 @@ template withAuthorityFile(filename: string, auth: untyped, body: untyped): unty
       echo "Invalid digest type: " & typToken
       continue
     
-    let auth: Authorisation = (typ, line.captureBetween('!', start = typCount))
+    let auth: Authorisation = (typ, line.captureBetween('!', start = typCount).toUpperAscii)
     body
 
   file.close()
 
-    
 proc parseGeminiResource(server: Server, uri: Uri): Resource =
   let vhostRoot = server.settings.rootDir / uri.hostname
   result = Resource(rootDir: vhostRoot, filePath: vhostRoot / uri.path, resPath: uri.path, uri: uri)
