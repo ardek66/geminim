@@ -12,7 +12,7 @@ type
     DigestErr
     DigestNull = "null"
 
-    DigestMD1 = "md1"
+    DigestMD5 = "md5"
     DigestSHA1 = "sha1"
     DigestSHA256 = "sha256"
     DigestSHA512 = "sha512"
@@ -20,9 +20,6 @@ type
   Authorisation* = tuple
     typ: DigestType
     digest: string
-
-proc printf(formatstr: cstring) {.importc: "printf", varargs,
-                                  header: "<stdio.h>".}
 
 proc EVP_get_digestbyname(name: cstring): PEVP_MD {.importc, dynlib: DLLUTilName.}
 proc EVP_MD_size(md: PEVP_MD): cuint {.importc, dynlib: DLLUtilName.}
