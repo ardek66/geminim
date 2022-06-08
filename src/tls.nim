@@ -1,12 +1,33 @@
-import openssl, strutils, net, asyncnet
+import openssl, strutils, parseutils, net, asyncnet
 export openssl
 
-type CertError* = enum
-  CertOK
+type
+  CertError* = enum
+    CertOK
   
-  CertExpired
-  CertInvalid
-    
+    CertExpired
+    CertInvalid
+
+  DigestType* = enum
+    DigestErr
+    DigestNull = "null"
+
+    DigestMD1 = "md1"
+    DigestSHA1 = "sha1"
+    DigestSHA256 = "sha256"
+    DigestSHA512 = "sha512"
+
+  Authorisation* = tuple
+    typ: DigestType
+    digest: string
+
+proc printf(formatstr: cstring) {.importc: "printf", varargs,
+                                  header: "<stdio.h>".}
+
+proc EVP_get_digestbyname(name: cstring): PEVP_MD {.importc, dynlib: DLLUTilName.}
+proc EVP_MD_size(md: PEVP_MD): cuint {.importc, dynlib: DLLUtilName.}
+proc EVP_Digest(data: pointer, count: cuint, md: cstring,
+                size: ptr cuint, typ: PEVP_MD, impl: SslPtr = nil): cint {.importc, dynlib: DLLUtilName.}
 proc PEM_read_bio_X509(bio: BIO, x: PX509, password_cb: cint, u: pointer): PX509 {.importc, dynlib: DLLSSLName.}
 proc SSL_CTX_set_verify_depth(ctx: SslCtx, depth: cint) {.importc, dynlib: DLLSSLName.}
 proc verify_cb(preverify_ok: int, ctx: pointer): int{.cdecl.} = 1
@@ -24,15 +45,6 @@ proc i2d_X509(cert: PX509): string =
 proc prepareGeminiCtx*(ctx: SslContext) =
   ctx.context.SSL_CTX_set_verify(SslVerifyPeer, verify_cb)
   ctx.context.SSL_CTX_set_verify_depth(0)
-  
-proc getX509Cert*(data: string): string =
-  let
-    bio = BIO_new_mem_buf(data.cstring, data.len.cint)
-    x509 = bio.PEM_read_bio_X509(nil, 0, nil)
-  bioFreeAll(bio)
-
-  if x509 == nil: return
-  return x509.i2d_X509
 
 proc getVerifyResult*(socket: AsyncSocket): CertError =
   let err = socket.sslHandle.SSL_get_verify_result()
@@ -44,20 +56,15 @@ proc getVerifyResult*(socket: AsyncSocket): CertError =
     else: CertInvalid
 
 proc getPeerCertificate*(socket: AsyncSocket): Certificate =
-  socket.sslHandle.SSL_get_peer_certificate.i2d_X509
+  socket.sslHandle.SSL_get_peer_certificate.i2d_x509
 
-proc readAuthorised*(data: string): seq[string] =
-  const
-    beginSep = "-----BEGIN CERTIFICATE-----"
-    endSep = "-----END CERTIFICATE-----"
+proc getDigest*(cert: Certificate, typ: DigestType): string =
+  let evp_typ = EVP_get_digestbyname(cstring($typ))
+  result = newString(evp_typ.EVP_MD_size)
   
-  result = @[]
-  var parseTop = 0
-  while parseTop < data.len:
-    let beginMark = data.find(beginSep, parseTop)
-    if beginMark == -1: return
-    let endMark = data.find(endSep, beginMark + beginSep.len)
-    if endMark == -1: return
+  var mdLen: cuint
+  let err = EVP_Digest(cert.cstring, cert.len.cuint, result.cstring, addr mdLen, evp_typ)
+  if(err < 1 or result.len != mdLen.int):
+    raise newException(ValueError, "Digest failed.")
 
-    result.add data[beginMark..endMark+endSep.len].getX509Cert()
-    parseTop = endMark + endSep.len
+  return result.toHex()

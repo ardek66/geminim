@@ -1,5 +1,5 @@
 import net, asyncnet, asyncdispatch, asyncfile,
-       uri, strutils, strformat, strtabs, streams,
+       uri, parseutils, strutils, strformat, strtabs, streams,
        options,
        os, osproc, md5, mimetypes
 
@@ -57,6 +57,38 @@ proc getUserDir(path: string): (string, string) =
 
   result = (path[2..<i], path[i..^1])
 
+template withAuthorityFile(filename: string, auth: untyped, body: untyped): untyped =
+  let file = openAsync(filename)
+
+  while true:
+    let line = await file.readLine()
+    if line.len < 1: break
+    if line[0] == '#': continue
+    
+    var typToken: string
+    let typCount = line.parseUntil(typToken, '!')
+    if typCount == line.len:
+      echo "Invalid authorization field: " & line
+      continue
+
+    let typ =
+      case typToken
+      of "md5": DigestMD5
+      of "sha1": DigestSHA1
+      of "sha256": DigestSHA256
+      of "sha512": DigestSHA512
+      else: DigestErr
+
+    if typ == DigestErr:
+      echo "Invalid digest type: " & typToken
+      continue
+    
+    let auth: Authorisation = (typ, line.captureBetween('!', start = typCount))
+    body
+
+  file.close()
+
+    
 proc parseGeminiResource(server: Server, uri: Uri): Resource =
   let vhostRoot = server.settings.rootDir / uri.hostname
   result = Resource(rootDir: vhostRoot, filePath: vhostRoot / uri.path, resPath: uri.path, uri: uri)
@@ -70,25 +102,37 @@ proc parseGeminiResource(server: Server, uri: Uri): Resource =
     result.filePath = vhostRoot
     result.resPath = "/"
 
-proc processGeminiUri(server: Server, req: Request): Option[Response] =
+proc processGeminiUri(server: Server, req: Request): Future[Option[Response]] {.async.} =
   let hostname = req.res.uri.hostname
   
   if server.settings.vhosts.hasKey hostname:
     let zone = server.settings.vhosts[hostname].findZone(req.res.resPath)
-    result =
-      case zone.ztype
-      of ZoneRedirect:
-        some response(StatusRedirect, zone.val)
-      of ZoneRedirectPerm:
-        some response(StatusRedirectPerm, zone.val)
-      of ZoneCgi:
-        some response(StatusCGI, zone.val)
-      of ZoneCert:
-        if req.cert.len == 0:
-          some response(StatusCertificateRequired, "A certificate is required to continue.")
-        else: none(Response)
-      
-      else: none(Response)
+    case zone.ztype
+    of ZoneRedirect:
+      return some response(StatusRedirect, zone.val)
+    of ZoneRedirectPerm:
+      return some response(StatusRedirectPerm, zone.val)
+    of ZoneCgi:
+      return some response(StatusCGI, zone.val)
+    of ZoneCert:
+      if req.cert.len == 0:
+        return some response(StatusCertificateRequired, "A certificate is required to continue.")
+      else:
+        var authorised = false
+        
+        withAuthorityFile(zone.val, auth):
+          let certDigest = req.cert.getDigest(auth.typ)
+          if certDigest == auth.digest:
+            authorised = true
+            break
+
+        if authorised:
+          return none(Response)
+        else:
+          return some response(StatusNotAuthorised,
+                               "The provided certificate is not authorized to access this resource.")
+    else:
+      return none(Response)
 
 proc processCGI(server: Server, req: Request, script: string): Future[void] {.async.} =
   let
@@ -116,7 +160,7 @@ proc processCGI(server: Server, req: Request, script: string): Future[void] {.as
   
 
 proc processTitanRequest(server: Server, req: Request): Future[Response] {.async.} =
-  let maybeZone = server.processGeminiUri(req)
+  let maybeZone = await server.processGeminiUri(req)
   if maybeZone.isSome(): return maybeZone.get()
 
   var 
@@ -213,7 +257,7 @@ proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.}
     result.body.add "\n"
 
 proc processGeminiRequest(server: Server, req: Request): Future[Response] {.async.} =
-  let maybeZone = server.processGeminiUri(req)
+  let maybeZone = await server.processGeminiUri(req)
 
   result =
     if maybeZone.isSome(): maybeZone.get()
@@ -238,14 +282,7 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
   of CertInvalid:
     await client.send $response(StatusInvalid, "The provided certificate is invalid.")
     return
-
-  var cert: Certificate
-  try:
-    cert = client.getPeerCertificate()
-  except ValueError:
-    await client.send $response(StatusInvalid, "Could not decode the provided certificate.")
-    return
-
+  
   if line.len == 0:
     await client.send $response(StatusMalformedRequest, "Empty request.")
     return
@@ -258,7 +295,9 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
   if uri.hostname.len == 0 or uri.scheme.len == 0:
     await client.send $response(StatusMalformedRequest, "Request '{line}' is malformed.")
     return
-    
+
+  let cert = client.getPeerCertificate()
+  
   case uri.scheme
   of "gemini":
     let
