@@ -34,7 +34,7 @@ declared authority file.
 The syntax for an authority file is as follow:
 #+BEGIN_EXAMPLE
 # Comment line
-<digest_type>!<digest>
+<digest_type>:<digest>
 ...
 #+END_EXAMPLE
 Where <digest_type> is one of:
@@ -45,7 +45,7 @@ Where <digest_type> is one of:
 
 And <digest> is the hash of the certificate to be authorised. The certificate must be hashed from it's
 DER format.
-For example, to obtain the SHA256 of the certificate:
+For example, to obtain the SHA256 of a certificate:
 #+BEGIN_EXAMPLE sh
 openssl x509 -in certs/cert.pem -outform der | openssl dgst -sha256
 #+END_EXAMPLE

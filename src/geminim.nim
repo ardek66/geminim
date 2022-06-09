@@ -58,15 +58,19 @@ proc getUserDir(path: string): (string, string) =
   result = (path[2..<i], path[i..^1])
 
 template withAuthorityFile(filename: string, auth: untyped, body: untyped): untyped =
+  const
+    Separator = ':'
+    Comment = '#'
+
   let file = openAsync(filename)
 
   while true:
     let line = await file.readLine()
     if line.len < 1: break
-    if line[0] == '#': continue
+    if line[0] == Comment: continue
     
     var typToken: string
-    let typCount = line.parseUntil(typToken, '!')
+    let typCount = line.parseUntil(typToken, Separator)
     if typCount == line.len:
       echo "Invalid authorization field: " & line
       continue
@@ -83,7 +87,7 @@ template withAuthorityFile(filename: string, auth: untyped, body: untyped): unty
       echo "Invalid digest type: " & typToken
       continue
     
-    let auth: Authorisation = (typ, line.captureBetween('!', start = typCount).toUpperAscii)
+    let auth: Authorisation = (typ, line.captureBetween(Separator, start = typCount).toUpperAscii)
     body
 
   file.close()
