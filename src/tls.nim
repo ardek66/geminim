@@ -53,7 +53,10 @@ proc getVerifyResult*(socket: AsyncSocket): CertError =
     else: CertInvalid
 
 proc getPeerCertificate*(socket: AsyncSocket): Certificate =
-  socket.sslHandle.SSL_get_peer_certificate.i2d_x509
+  var cert = socket.sslHandle.SSL_get_peer_certificate()
+
+  result = cert.i2d_x509
+  X509_free(cert)
 
 proc getDigest*(cert: Certificate, typ: DigestType): string =
   let evp_typ = EVP_get_digestbyname(cstring($typ))
