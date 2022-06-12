@@ -166,9 +166,21 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
   let maybeZone = await server.processGeminiUri(req)
   if maybeZone.isSome(): return maybeZone.get()
 
-  var 
-    size: int
-    token: string
+  let titanSettings = server.settings.titanSettings
+
+  var authorised = false
+  if fileExists(titanSettings.authorisedCerts) and req.cert.len > 0:
+    withAuthorityFile(titanSettings.authorisedCerts, auth):
+      let certDigest = req.cert.getDigest(auth.typ)
+      if certDigest == auth.digest:
+        authorised = true
+        break
+
+  if not authorised:
+    return response(StatusNotAuthorised,
+                    "The connection is unauthorised for uploading resources.")
+
+  var size: int
   
   for i in 1..req.params.high:
     let keyVal = req.params[i].split("=")
@@ -181,20 +193,12 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
         if size <= 0: raise newException(ValueError, "Negative size")
       except ValueError:
         return response(StatusMalformedRequest, &"Size '{keyVal[1]}' is invalid.")
-    
-    if keyVal[0] == "token":
-      token = keyVal[1].decodeUrl
 
   if size == 0:
     return response(StatusMalformedRequest, "No file size specified.")
-  
-  let titanSettings = server.settings.titanSettings
 
   if size > titanSettings.uploadLimit:
     return response(StatusError, &"File size exceeds limit of {titanSettings.uploadLimit} bytes.")
-
-  if token != titanSettings.password and titanSettings.passwordRequired:
-    return response(StatusNotAuthorised, "Token not recognized.")
 
   var filePath = req.res.filePath
   let (parent, _ ) = filePath.splitPath

@@ -31,8 +31,7 @@ type
     titanSettings*: TitanSettings
 
   TitanSettings* = object
-    password*: string
-    passwordRequired*: bool
+    authorisedCerts*: string
     uploadLimit*: int
     redirect*: bool
 
@@ -123,8 +122,7 @@ proc readSettings*(path: string): Settings =
     homeDir: defaultHome,
     dirHeader: "header.gemini",
     titanSettings: TitanSettings(
-      password: "titanpassword",
-      passwordRequired: true,
+      authorisedCerts: "titan_certs",
       uploadLimit: 10485760,
       redirect: true)
   )
@@ -156,8 +154,7 @@ proc readSettings*(path: string): Settings =
           of "dirheader": result.dirHeader = e.value
         elif section == "titan":
           case e.key.toLowerAscii
-          of "password": result.titanSettings.password = e.value
-          of "passwordrequired": result.titanSettings.passwordRequired = e.value.parseBool
+          of "authorisedCerts": result.titanSettings.authorisedCerts = e.value
           of "uploadlimit": result.titanSettings.uploadLimit = e.value.parseInt
           of "redirect": result.titanSettings.redirect = e.value.parseBool
         else:
