@@ -8,17 +8,33 @@
 
   outputs = { self, nixpkgs, flake-utils, flake-nimble }:
     flake-utils.lib.eachDefaultSystem (sys:
-      let
-        pkgs = nixpkgs.legacyPackages.${sys};
-        nimblePkgs = flake-nimble.packages.${sys};
-      in {
-        packages.geminim = pkgs.nimPackages.buildNimPackage {
-          pname = "geminim";
-          version = "0.1.5";
-          src = ./.;
-          buildInputs = [ pkgs.openssl ];
+      let pkgs = nixpkgs.legacyPackages.${sys}; in
+      rec {
+        overlays.default = final: prev: {
+          nimPackages = prev.nimPackages.overrideScope' (nimfinal: nimprev: {
+            stew = pkgs.nimPackages.stew;
+            
+            chronos = nimprev.chronos.overrideAttrs (oldAttrs: {
+              inherit (nimprev.chronos) pname version src;
+              doCheck = false;
+            });
+          });
         };
-
-        defaultPackage = self.packages.${sys}.geminim;
+        
+        pkgsWithNimble = pkgs.appendOverlays [ flake-nimble.overlay overlays.default ];
+        
+        packages = flake-utils.lib.flattenTree {
+          chronos = pkgsWithNimble.nimPackages.chronos;
+          openssl = pkgs.openssl;
+          
+          geminim = pkgs.nimPackages.buildNimPackage {
+            pname = "geminim";
+            version = "0.1.5";
+            src = ./.;
+            nativeBuildInputs = with packages; [ chronos openssl ];
+          };
+        };
+        
+        defaultPackage = packages.geminim;
       });
 }
