@@ -1,37 +1,33 @@
-import asyncfile
-
 type RespStatus* = enum
-  StatusNull
-  StatusCGI
+  RespNull
+  RespCGI
   
-  StatusInputRequired = "10"
-  StatusSensitiveInput = "11"
-  StatusSuccess = "20"
-  StatusSuccessOther = "20"
-  StatusRedirect = "30"
-  StatusRedirectPerm = "31"
-  StatusTempError = "40"
-  StatusServerUnavailable = "41"
-  StatusCGIError = "42"
-  StatusProxyError = "43"
-  StatusSlowDown = "44"
-  StatusError = "50"
-  StatusNotFound = "51"
-  StatusGone = "52"
-  StatusProxyRefused = "53"
-  StatusMalformedRequest = "59"
-  StatusCertificateRequired = "60"
-  StatusNotAuthorised = "61"
-  StatusExpired = "62"
-  StatusInvalid = "63"
+  RespInputRequired = "10"
+  RespSensitiveInput = "11"
+  RespSuccess = "20"
+  RespSuccessOther = "20"
+  RespRedirect = "30"
+  RespRedirectPerm = "31"
+  RespTempError = "40"
+  RespServerUnavailable = "41"
+  RespCGIError = "42"
+  RespProxyError = "43"
+  RespSlowDown = "44"
+  RespError = "50"
+  RespNotFound = "51"
+  RespGone = "52"
+  RespProxyRefused = "53"
+  RespMalformedRequest = "59"
+  RespCertificateRequired = "60"
+  RespNotAuthorised = "61"
+  RespExpired = "62"
+  RespInvalid = "63"
 
 type Response* = object
   meta*: string
   case code*: RespStatus
-  of StatusSuccess:
-    file*: AsyncFile
-  of StatusSuccessOther:
-    body*: string
+  of RespSuccess:
+    file*: File
   else: discard
 
 proc response*(code: RespStatus, meta = ""): Response =

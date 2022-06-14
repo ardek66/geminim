@@ -1,7 +1,8 @@
-import openssl, strutils, parseutils, net, asyncnet
-export openssl
+import strutils, parseutils
 
 type
+  Certificate* = string
+  
   CertError* = enum
     CertOK
   
@@ -21,7 +22,7 @@ type
     typ: DigestType
     digest: string
 
-proc EVP_get_digestbyname(name: cstring): PEVP_MD {.importc, dynlib: DLLUTilName.}
+#[proc EVP_get_digestbyname(name: cstring): PEVP_MD {.importc, dynlib: DLLUTilName.}
 proc EVP_MD_size(md: PEVP_MD): cuint {.importc, dynlib: DLLUtilName.}
 proc EVP_Digest(data: pointer, count: cuint, md: cstring,
                 size: ptr cuint, typ: PEVP_MD, impl: SslPtr = nil): cint {.importc, dynlib: DLLUtilName.}
@@ -39,11 +40,12 @@ proc i2d_X509(cert: PX509): string =
   if length.int < 0:
     raise newException(ValueError, "X.509 certificate encoding failed")
 
-proc prepareGeminiCtx*(ctx: SslContext) =
+#[proc prepareGeminiCtx*(ctx: SslContext) =
   ctx.context.SSL_CTX_set_verify(SslVerifyPeer, verify_cb)
   ctx.context.SSL_CTX_set_verify_depth(0)
+]#
 
-proc getVerifyResult*(socket: AsyncSocket): CertError =
+#[proc getVerifyResult*(socket: AsyncSocket): CertError =
   let err = socket.sslHandle.SSL_get_verify_result()
 
   result =
@@ -57,7 +59,8 @@ proc getPeerCertificate*(socket: AsyncSocket): Certificate =
 
   result = cert.i2d_x509
   X509_free(cert)
-
+]#
+    
 proc getDigest*(cert: Certificate, typ: DigestType): string =
   let evp_typ = EVP_get_digestbyname(cstring($typ))
   result = newString(evp_typ.EVP_MD_size)
@@ -68,3 +71,4 @@ proc getDigest*(cert: Certificate, typ: DigestType): string =
     raise newException(ValueError, "Digest failed.")
 
   return result.toHex()
+]#

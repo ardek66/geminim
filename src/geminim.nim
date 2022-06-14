@@ -1,7 +1,8 @@
-import net, asyncnet, asyncdispatch, asyncfile,
-       uri, parseutils, strutils, strformat, strtabs, streams,
-       options,
-       os, osproc, md5, mimetypes
+import parseutils, strutils, strformat, strtabs,
+       uri, options, mimetypes,
+       os, osproc
+       
+import chronos, chronos/sendfile, chronos/streams/tlsstream
 
 import response, tls, config
 
@@ -11,11 +12,17 @@ m.register(ext = "gmi", mimetype = "text/gemini")
 
 type
   Server = object
-    socket: AsyncSocket
-    ctx: SslContext
+    impl: StreamServer
     settings: Settings
-    certMD5: string
 
+  Conn = object
+    transp: StreamTransport
+    mainWriter: AsyncStreamWriter
+    mainReader: AsyncStreamReader
+    writer: AsyncStreamWriter
+    reader: AsyncStreamReader
+    tls: TLSAsyncStream
+  
   Protocol = enum
     ProtocolGemini = "gemini"
     ProtocolTitan = "titan"
@@ -25,8 +32,8 @@ type
     rootDir, filePath, resPath: string
   
   Request = object
-    client: AsyncSocket
-    cert: Certificate
+    conn: Conn
+    cert: tls.Certificate
     
     res: Resource
     case protocol: Protocol
@@ -34,20 +41,11 @@ type
       params: seq[string]
     else: discard
 
-proc requestGemini(client: AsyncSocket, cert: Certificate, res: Resource): Request =
-  Request(client: client, cert: cert, res: res, protocol: ProtocolGemini)
+proc requestGemini(conn: Conn, cert: tls.Certificate, res: Resource): Request =
+  Request(conn: conn, cert: cert, res: res, protocol: ProtocolGemini)
 
-proc requestTitan(client: AsyncSocket, cert: Certificate, res: Resource, params: seq[string]): Request =
-  Request(client: client, cert: cert, res: res, protocol: ProtocolTitan, params: params)
-
-proc initServer(settings: Settings): Server =
-  result.ctx = newContext(certFile = settings.certFile,
-                          keyFile = settings.keyFile)
-  result.ctx.prepareGeminiCtx()
-  
-  result.settings = settings
-  result.certMD5 = readFile(settings.certFile).getMD5()
-  result.socket = newAsyncSocket()
+proc requestTitan(conn: Conn, cert: tls.Certificate, res: Resource, params: seq[string]): Request =
+  Request(conn: conn, cert: cert, res: res, protocol: ProtocolTitan, params: params)
 
 proc getUserDir(path: string): (string, string) =
   var i = 2
@@ -62,11 +60,7 @@ template withAuthorityFile(filename: string, auth: untyped, body: untyped): unty
     Separator = ':'
     Comment = '#'
 
-  let file = openAsync(filename)
-
-  while true:
-    let line = await file.readLine()
-    if line.len < 1: break
+  for line in lines(filename):
     if line[0] == Comment: continue
     
     var typToken: string
@@ -90,8 +84,6 @@ template withAuthorityFile(filename: string, auth: untyped, body: untyped): unty
     let auth: Authorisation = (typ, line.captureBetween(Separator, start = typCount).toUpperAscii)
     body
 
-  file.close()
-
 proc parseGeminiResource(server: Server, uri: Uri): Resource =
   let vhostRoot = server.settings.rootDir / uri.hostname
   result = Resource(rootDir: vhostRoot, filePath: vhostRoot / uri.path, resPath: uri.path, uri: uri)
@@ -112,19 +104,20 @@ proc processGeminiUri(server: Server, req: Request): Future[Option[Response]] {.
     let zone = server.settings.vhosts[hostname].findZone(req.res.resPath)
     case zone.ztype
     of ZoneRedirect:
-      return some response(StatusRedirect, zone.val)
+      return some response(RespRedirect, zone.val)
     of ZoneRedirectPerm:
-      return some response(StatusRedirectPerm, zone.val)
+      return some response(RespRedirectPerm, zone.val)
     of ZoneCgi:
-      return some response(StatusCGI, zone.val)
+      return some response(RespCGI, zone.val)
     of ZoneCert:
       if req.cert.len == 0:
-        return some response(StatusCertificateRequired, "A certificate is required to continue.")
+        return some response(RespCertificateRequired, "A certificate is required to continue.")
       else:
         var authorised = false
         
         withAuthorityFile(zone.val, auth):
-          let certDigest = req.cert.getDigest(auth.typ)
+          #let certDigest = req.cert.getDigest(auth.typ)
+          let certDigest = ""
           if certDigest == auth.digest:
             authorised = true
             break
@@ -132,17 +125,17 @@ proc processGeminiUri(server: Server, req: Request): Future[Option[Response]] {.
         if authorised:
           return none(Response)
         else:
-          return some response(StatusNotAuthorised,
+          return some response(RespNotAuthorised,
                                "The provided certificate is not authorized to access this resource.")
     else:
       return none(Response)
 
-proc processCGI(server: Server, req: Request, script: string): Future[void] {.async.} =
+#[proc processCGI(server: Server, req: Request, script: string): Future[void] {.async.} =
   let
     scriptName = script.extractFileName()
 
   if not fileExists(script):
-    await req.client.send $response(StatusNotFound,
+    await req.client.send $response(RespNotFound,
                                     &"The CGI script '{scriptName}' could not be found.")
   else:
     let envTable =
@@ -161,8 +154,9 @@ proc processCGI(server: Server, req: Request, script: string): Future[void] {.as
       await req.client.send p.outputStream.readStr(BufferSize)
     p.close()
   
+]#
 
-proc processTitanRequest(server: Server, req: Request): Future[Response] {.async.} =
+#[proc processTitanRequest(server: Server, req: Request): Future[Response] {.async.} =
   let maybeZone = await server.processGeminiUri(req)
   if maybeZone.isSome(): return maybeZone.get()
 
@@ -177,7 +171,7 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
         break
 
   if not authorised:
-    return response(StatusNotAuthorised,
+    return response(RespNotAuthorised,
                     "The connection is unauthorised for uploading resources.")
 
   var size: int
@@ -185,20 +179,20 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
   for i in 1..req.params.high:
     let keyVal = req.params[i].split("=")
     if keyVal.len != 2:
-      return response(StatusMalformedRequest, &"Bad parameter: '{req.params[i]}'.")
+      return response(RespMalformedRequest, &"Bad parameter: '{req.params[i]}'.")
     
     if keyVal[0] == "size":
       try:
         size = keyVal[1].parseInt()
         if size <= 0: raise newException(ValueError, "Negative size")
       except ValueError:
-        return response(StatusMalformedRequest, &"Size '{keyVal[1]}' is invalid.")
+        return response(RespMalformedRequest, &"Size '{keyVal[1]}' is invalid.")
 
   if size == 0:
-    return response(StatusMalformedRequest, "No file size specified.")
+    return response(RespMalformedRequest, "No file size specified.")
 
   if size > titanSettings.uploadLimit:
-    return response(StatusError, &"File size exceeds limit of {titanSettings.uploadLimit} bytes.")
+    return response(RespError, &"File size exceeds limit of {titanSettings.uploadLimit} bytes.")
 
   var filePath = req.res.filePath
   let (parent, _ ) = filePath.splitPath
@@ -206,41 +200,39 @@ proc processTitanRequest(server: Server, req: Request): Future[Response] {.async
   try:
     createDir(parent) # will simply succeed if it already exists
   except OSError:
-    return response(StatusError, &"Error writing to: '{req.res.resPath}'.")
+    return response(RespError, &"Error writing to: '{req.res.resPath}'.")
   except IOError:
-    return response(StatusError, &"Could not create path: '{req.res.resPath}'.")
+    return response(RespError, &"Could not create path: '{req.res.resPath}'.")
 
   if dirExists(filePath): # We're writing index.gmi in an existing directory
     filePath = filePath / "index.gmi"
 
   let buffer = await req.client.recv(size)
   try:
-    let file = openAsync(filePath, fmWrite)
-
-    await file.write(buffer)
-    file.close()
+    writeFile(filePath, buffer)
   except:
     echo getCurrentExceptionMsg()
-    return response(StatusError, "")
+    return response(RespError, "")
 
   if titanSettings.redirect:
     var newUri = req.res.uri
     newUri.scheme = "gemini"
 
-    return response(StatusRedirect, $newUri)
+    return response(RespRedirect, $newUri)
   else:
-      result = response(StatusSuccessOther, "text/gemini")
+      result = response(RespSuccessOther, "text/gemini")
       result.body = &"Succesfully wrote file '{req.res.resPath}'."
+]#
 
 proc serveFile(server: Server, path: string): Future[Response] {.async.} =
-  result = response(StatusSuccess, m.getMimetype(path.splitFile.ext))
-  result.file = openAsync(path)
+  result = response(RespSuccess, m.getMimetype(path.splitFile.ext))
+  result.file = open(path)
 
-proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.} =
+#[proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.} =
   template link(path: string): string =
     "=> " / path
 
-  result = response(StatusSuccessOther, "text/gemini")
+  result = response(RespSuccessOther, "text/gemini")
   
   let headerPath = path / server.settings.dirHeader
   if fileExists(headerPath):
@@ -262,6 +254,7 @@ proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.}
     of pcDir: result.body.add " [DIR]"
     of pcLinkToFile, pcLinkToDir: result.body.add " [SYMLINK]"
     result.body.add "\n"
+]#
 
 proc processGeminiRequest(server: Server, req: Request): Future[Response] {.async.} =
   let maybeZone = await server.processGeminiUri(req)
@@ -270,75 +263,76 @@ proc processGeminiRequest(server: Server, req: Request): Future[Response] {.asyn
     if maybeZone.isSome(): maybeZone.get()
     elif fileExists(req.res.filePath):
       await server.serveFile(req.res.filePath)
-    elif dirExists(req.res.filePath):
-      await server.serveDir(req.res.filePath, req.res.resPath)
+    #[elif dirExists(req.res.filePath):
+      await server.serveDir(req.res.filePath, req.res.resPath)]#
 
     else:
-      response(StatusNotFound, &"'{req.res.uri.path}' was not found.")
+      response(RespNotFound, &"'{req.res.uri.path}' was not found.")
   
-proc handle(server: Server, client: AsyncSocket) {.async.} =
-  server.ctx.wrapConnectedSocket(client, handshakeAsServer)
+proc handle(server: Server, conn: Conn) {.async.} =
+  let line = await conn.reader.readLine()
   
-  let line = await client.recvLine()
-
-  case client.getVerifyResult()
+  #[case client.getVerifyResult()
   of CertOK: discard
   of CertExpired:
-    await client.send $response(StatusExpired, "The provided certificate has expired.")
+    await client.send $response(RespExpired, "The provided certificate has expired.")
     return
   of CertInvalid:
-    await client.send $response(StatusInvalid, "The provided certificate is invalid.")
+    await client.send $response(RespInvalid, "The provided certificate is invalid.")
     return
+  ]#
   
   if line.len == 0:
-    await client.send $response(StatusMalformedRequest, "Empty request.")
+    await conn.writer.write $response(RespMalformedRequest, "Empty request.")
     return
   
   if line.len > 1024:
-    await client.send $response(StatusMalformedRequest, "Request is too long.")
+    await conn.writer.write $response(RespMalformedRequest, "Request is too long.")
     return
 
   let uri = parseUri(line)
   if uri.hostname.len == 0 or uri.scheme.len == 0:
-    await client.send $response(StatusMalformedRequest, "Request '{line}' is malformed.")
+    await conn.writer.write $response(RespMalformedRequest, &"Request '{line}' is malformed.")
     return
 
-  let cert = client.getPeerCertificate()
+  #let cert = client.getPeerCertificate()
+  let cert = ""
   
   case uri.scheme
   of "gemini":
     let
       res = server.parseGeminiResource(uri)
-      req = requestGemini(client, cert, res)
+      req = requestGemini(conn, cert, res)
       resp = await server.processGeminiRequest(req)
         
     case resp.code
-    of StatusNull:
-      await client.send resp.meta
+    of RespNull:
+      await conn.writer.write resp.meta
           
-    of StatusCGI:
-      await server.processCGI(req, resp.meta)
+    of RespCGI:
+      #await server.processCGI(req, resp.meta)
+      discard
         
     else:
-      await client.send $resp
+      await conn.writer.write $resp
       
       case resp.code
-      of StatusSuccess:
-        while true:
-          let buffer = await resp.file.read(BufferSize)
-          if buffer.len < 1: break
-          await client.send buffer
+      of RespSuccess:
+        #discard sendFile(int(rtransp.tsource.fd), int(resp.file.getFileHandle()), 0, count)
+        await conn.writer.write resp.file.readAll
         resp.file.close()
+        
             
-      of StatusSuccessOther:
-        await client.send resp.body
+      of RespSuccessOther:
+        return
+        #await client.send resp.body
           
       else: return
 
-  of "titan":
-    let params = split(line, ";")
+  of "titan": return
+    #[let params = split(line, ";")
     if params.len < 2:
-      await client.send $response(StatusMalformedRequest)
+      await client.send $response(RespMalformedRequest)
         
     else:
       let
@@ -347,35 +341,58 @@ proc handle(server: Server, client: AsyncSocket) {.async.} =
         resp = await server.processTitanRequest(req)
             
       case resp.code
-      of StatusCGI:
-        await server.processCGI(req, resp.meta)
+      of RespCGI:
+        #await server.processCGI(req, resp.meta)
+        discard
           
       else:
-        await client.send $resp
+        await client.send $resp]#
              
   else:
-    await client.send $response(StatusProxyRefused, &"The protocol '{uri.scheme}' is unsuported.")
+    await conn.writer.write $response(RespProxyRefused, &"The protocol '{uri.scheme}' is unsuported.")
+
+proc initServer(settings: Settings): Server =
+  #[result.ctx = newContext(certFile = settings.certFile,
+                          keyFile = settings.keyFile)
+  result.ctx.prepareGeminiCtx()]#
+  
+  result.settings = settings
+  
+  let ta = initTAddress("127.0.0.1:" & $settings.port)
+  result.impl = createStreamServer(ta, flags = {ReuseAddr, ReusePort})
+
+
+proc acceptConn(server: Server): Future[Conn] {.async.} =
+  let transp = await server.impl.accept()
+  result = Conn(transp: transp,
+                mainReader: newAsyncStreamReader(transp),
+                mainWriter: newAsyncStreamWriter(transp))
+
+
+  result.tls =
+    newTLSServerAsyncStream(result.mainReader, result.mainWriter,
+                            TLSPrivateKey.init(server.settings.keyFile.readFile),
+                            TLSCertificate.init(server.settings.certFile.readFile),
+                            minVersion = TLSVersion.TLS12)
+
+  await handshake(result.tls)
+  result.reader = AsyncStreamReader(result.tls.reader)
+  result.writer = AsyncStreamWriter(result.tls.writer)
+  
+proc closeWait(conn: Conn): Future[void] =
+  allFutures(conn.reader.closeWait(),
+             conn.writer.closeWait(),
+             conn.mainReader.closeWait(),
+             conn.mainWriter.closeWait(),
+             conn.transp.closeWait())
 
 proc serve(server: Server) {.async.} =
-  server.ctx.sessionIdContext = server.certMD5
-  server.socket.setSockOpt(OptReuseAddr, true)
-  server.socket.setSockOpt(OptReusePort, true)
-  server.socket.bindAddr(Port(server.settings.port))
-
-  server.ctx.wrapSocket(server.socket)
-  server.socket.listen()
-
   while true:
-    let
-      client = await server.socket.accept()
-      future = server.handle(client)
-
-    yield future
-    if future.failed:
-      await client.send $response(StatusTempError, "Internal error.")
-      echo future.error.msg
-
-    client.close()
+    let conn = await server.acceptConn()
+    
+    await server.handle(conn)
+    await conn.writer.finish()
+    await conn.closeWait()
       
 proc main() =
   if paramCount() != 1:

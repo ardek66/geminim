@@ -1,3 +1,8 @@
+* This is the EXPERIMENTAL `chronos` branch.
+*As GemiNim is being ported from asyncdispatch to chronos,*
+*there will be a lot of missing features and bugs.*
+Do _*NOT*_ use this branch yet.
+
 * GemiNim
 
 GemiNim is a simple Nim server for the [[https://gemini.circumlunar.space/][Gemini]] protocol.
