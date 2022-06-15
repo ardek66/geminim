@@ -383,16 +383,19 @@ proc processClient(stream: StreamServer, transp: StreamTransport) {.async.} =
 proc newServer(settings: Settings): Server =
   let address = initTAddress("127.0.0.1:" & $settings.port)
 
-  result =
-    Server(settings: settings,
-           key: TLSPrivateKey.init(settings.keyFile.readFile),
-           cert: TLSCertificate.init(settings.certFile.readFile))
+proc newServer(settings: Settings): Server =
+  let
+    server =
+      Server(settings: settings,
+             key: TLSPrivateKey.init(settings.keyFile.readFile),
+             cert: TLSCertificate.init(settings.certFile.readFile))
+
+    address = initTAddress("127.0.0.1:" & $settings.port)
   
-  result =
-    Server(createStreamServer(address,
-                              processClient,
-                              child = result,
-                              flags = {ReuseAddr, ReusePort}))
+  Server(createStreamServer(address,
+                            processClient,
+                            child = server,
+                            flags = {ReuseAddr, ReusePort}))
 
 proc serve(server: Server) {.async.} =
   server.start()
