@@ -372,16 +372,15 @@ proc closeWait(conn: Conn): Future[void] =
              conn.transp.closeWait())
 
 proc processClient(stream: StreamServer, transp: StreamTransport) {.async.} =
-  let
-    server = Server(stream)
-    conn = await server.wrapConn(transp)
-  
-  await server.handle(conn)
-  await conn.writer.finish()
-  await conn.closeWait()
+  let server = Server(stream)
 
-proc newServer(settings: Settings): Server =
-  let address = initTAddress("127.0.0.1:" & $settings.port)
+  try:
+    let conn = await server.wrapConn(transp)
+    await server.handle(conn)
+    await conn.writer.finish()
+    await conn.closeWait()
+  except:
+    echo getCurrentExceptionMsg()
 
 proc newServer(settings: Settings): Server =
   let
