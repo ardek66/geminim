@@ -11,14 +11,13 @@ m.register(ext = "gemini", mimetype = "text/gemini")
 m.register(ext = "gmi", mimetype = "text/gemini")
 
 type
-  Server = object
-    impl: StreamServer
+  Server = ref object of StreamServer
+    key: TLSPrivateKey
+    cert: TLSCertificate
     settings: Settings
 
   Conn = object
     transp: StreamTransport
-    mainWriter: AsyncStreamWriter
-    mainReader: AsyncStreamReader
     writer: AsyncStreamWriter
     reader: AsyncStreamReader
     tls: TLSAsyncStream
@@ -351,28 +350,16 @@ proc handle(server: Server, conn: Conn) {.async.} =
   else:
     await conn.writer.write $response(RespProxyRefused, &"The protocol '{uri.scheme}' is unsuported.")
 
-proc initServer(settings: Settings): Server =
-  #[result.ctx = newContext(certFile = settings.certFile,
-                          keyFile = settings.keyFile)
-  result.ctx.prepareGeminiCtx()]#
-  
-  result.settings = settings
-  
-  let ta = initTAddress("127.0.0.1:" & $settings.port)
-  result.impl = createStreamServer(ta, flags = {ReuseAddr, ReusePort})
-
-
-proc acceptConn(server: Server): Future[Conn] {.async.} =
-  let transp = await server.impl.accept()
+proc wrapConn(server: Server, transp: StreamTransport): Future[Conn] {.async.} =
   result = Conn(transp: transp,
-                mainReader: newAsyncStreamReader(transp),
-                mainWriter: newAsyncStreamWriter(transp))
-
+                reader: newAsyncStreamReader(transp),
+                writer: newAsyncStreamWriter(transp))
 
   result.tls =
-    newTLSServerAsyncStream(result.mainReader, result.mainWriter,
-                            TLSPrivateKey.init(server.settings.keyFile.readFile),
-                            TLSCertificate.init(server.settings.certFile.readFile),
+    newTLSServerAsyncStream(result.reader,
+                            result.writer,
+                            server.key,
+                            server.cert,
                             minVersion = TLSVersion.TLS12)
 
   await handshake(result.tls)
@@ -382,18 +369,35 @@ proc acceptConn(server: Server): Future[Conn] {.async.} =
 proc closeWait(conn: Conn): Future[void] =
   allFutures(conn.reader.closeWait(),
              conn.writer.closeWait(),
-             conn.mainReader.closeWait(),
-             conn.mainWriter.closeWait(),
              conn.transp.closeWait())
 
+proc processClient(stream: StreamServer, transp: StreamTransport) {.async.} =
+  let
+    server = Server(stream)
+    conn = await server.wrapConn(transp)
+  
+  await server.handle(conn)
+  await conn.writer.finish()
+  await conn.closeWait()
+
+proc newServer(settings: Settings): Server =
+  let address = initTAddress("127.0.0.1:" & $settings.port)
+
+  result =
+    Server(settings: settings,
+           key: TLSPrivateKey.init(settings.keyFile.readFile),
+           cert: TLSCertificate.init(settings.certFile.readFile))
+  
+  result =
+    Server(createStreamServer(address,
+                              processClient,
+                              child = result,
+                              flags = {ReuseAddr, ReusePort}))
+
 proc serve(server: Server) {.async.} =
-  while true:
-    let conn = await server.acceptConn()
-    
-    await server.handle(conn)
-    await conn.writer.finish()
-    await conn.closeWait()
-      
+  server.start()
+  await server.join()
+
 proc main() =
   if paramCount() != 1:
     echo "USAGE:"
@@ -401,7 +405,7 @@ proc main() =
   else:
     let file = paramStr(1)
     if fileExists(file):
-      let server = initServer(file.readSettings)
+      let server = newServer(file.readSettings)
       waitFor server.serve()
     else:
       echo &"{file}: file not found."
