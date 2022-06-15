@@ -5,7 +5,6 @@ type RespStatus* = enum
   RespInputRequired = "10"
   RespSensitiveInput = "11"
   RespSuccess = "20"
-  RespSuccessOther = "20"
   RespRedirect = "30"
   RespRedirectPerm = "31"
   RespTempError = "40"
@@ -27,7 +26,7 @@ type Response* = object
   meta*: string
   case code*: RespStatus
   of RespSuccess:
-    file*: File
+    body*: string
   else: discard
 
 proc response*(code: RespStatus, meta = ""): Response =

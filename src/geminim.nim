@@ -1,4 +1,4 @@
-import parseutils, strutils, strformat, strtabs,
+import parseutils, strutils, strformat, strtabs, streams,
        uri, options, mimetypes,
        os, osproc
        
@@ -129,13 +129,13 @@ proc processGeminiUri(server: Server, req: Request): Future[Option[Response]] {.
     else:
       return none(Response)
 
-#[proc processCGI(server: Server, req: Request, script: string): Future[void] {.async.} =
+proc processCGI(server: Server, req: Request, script: string): Future[void] {.async.} =
   let
     scriptName = script.extractFileName()
 
   if not fileExists(script):
-    await req.client.send $response(RespNotFound,
-                                    &"The CGI script '{scriptName}' could not be found.")
+    await req.conn.writer.write $response(RespNotFound,
+                                          &"The CGI script '{scriptName}' could not be found.")
   else:
     let envTable =
       {
@@ -150,12 +150,10 @@ proc processGeminiUri(server: Server, req: Request): Future[Option[Response]] {.
 
     var p = startProcess(script, env = envTable)
     while not p.outputStream.atEnd:
-      await req.client.send p.outputStream.readStr(BufferSize)
+      await req.conn.writer.write p.outputStream.readStr(BufferSize)
     p.close()
-  
-]#
 
-#[proc processTitanRequest(server: Server, req: Request): Future[Response] {.async.} =
+proc processTitanRequest(server: Server, req: Request): Future[Response] {.async.} =
   let maybeZone = await server.processGeminiUri(req)
   if maybeZone.isSome(): return maybeZone.get()
 
@@ -169,6 +167,7 @@ proc processGeminiUri(server: Server, req: Request): Future[Option[Response]] {.
         authorised = true
         break
 
+  authorised = true
   if not authorised:
     return response(RespNotAuthorised,
                     "The connection is unauthorised for uploading resources.")
@@ -206,7 +205,9 @@ proc processGeminiUri(server: Server, req: Request): Future[Option[Response]] {.
   if dirExists(filePath): # We're writing index.gmi in an existing directory
     filePath = filePath / "index.gmi"
 
-  let buffer = await req.client.recv(size)
+  var buffer = newString(size)
+  await req.conn.reader.readExactly(buffer.cstring, size)
+  
   try:
     writeFile(filePath, buffer)
   except:
@@ -219,19 +220,18 @@ proc processGeminiUri(server: Server, req: Request): Future[Option[Response]] {.
 
     return response(RespRedirect, $newUri)
   else:
-      result = response(RespSuccessOther, "text/gemini")
+      result = response(RespSuccess, "text/gemini")
       result.body = &"Succesfully wrote file '{req.res.resPath}'."
-]#
 
 proc serveFile(server: Server, path: string): Future[Response] {.async.} =
   result = response(RespSuccess, m.getMimetype(path.splitFile.ext))
-  result.file = open(path)
+  result.body = readFile(path)
 
-#[proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.} =
+proc serveDir(server: Server, path, resPath: string): Future[Response] {.async.} =
   template link(path: string): string =
     "=> " / path
 
-  result = response(RespSuccessOther, "text/gemini")
+  result = response(RespSuccess, "text/gemini")
   
   let headerPath = path / server.settings.dirHeader
   if fileExists(headerPath):
@@ -253,7 +253,6 @@ proc serveFile(server: Server, path: string): Future[Response] {.async.} =
     of pcDir: result.body.add " [DIR]"
     of pcLinkToFile, pcLinkToDir: result.body.add " [SYMLINK]"
     result.body.add "\n"
-]#
 
 proc processGeminiRequest(server: Server, req: Request): Future[Response] {.async.} =
   let maybeZone = await server.processGeminiUri(req)
@@ -262,8 +261,8 @@ proc processGeminiRequest(server: Server, req: Request): Future[Response] {.asyn
     if maybeZone.isSome(): maybeZone.get()
     elif fileExists(req.res.filePath):
       await server.serveFile(req.res.filePath)
-    #[elif dirExists(req.res.filePath):
-      await server.serveDir(req.res.filePath, req.res.resPath)]#
+    elif dirExists(req.res.filePath):
+      await server.serveDir(req.res.filePath, req.res.resPath)
 
     else:
       response(RespNotFound, &"'{req.res.uri.path}' was not found.")
@@ -309,43 +308,33 @@ proc handle(server: Server, conn: Conn) {.async.} =
       await conn.writer.write resp.meta
           
     of RespCGI:
-      #await server.processCGI(req, resp.meta)
+      await server.processCGI(req, resp.meta)
       discard
         
     else:
       await conn.writer.write $resp
-      
-      case resp.code
-      of RespSuccess:
-        #discard sendFile(int(rtransp.tsource.fd), int(resp.file.getFileHandle()), 0, count)
-        await conn.writer.write resp.file.readAll
-        resp.file.close()
-        
-            
-      of RespSuccessOther:
-        return
-        #await client.send resp.body
-          
-      else: return
 
-  of "titan": return
-    #[let params = split(line, ";")
+      if resp.code == RespSuccess:
+        await conn.writer.write resp.body
+
+  of "titan":
+    let params = split(line, ";")
     if params.len < 2:
-      await client.send $response(RespMalformedRequest)
+      await conn.writer.write $response(RespMalformedRequest)
         
     else:
       let
         res = server.parseGeminiResource(params[0].parseUri)
-        req = requestTitan(client, cert, res, params)
+        req = requestTitan(conn, cert, res, params)
         resp = await server.processTitanRequest(req)
             
       case resp.code
       of RespCGI:
-        #await server.processCGI(req, resp.meta)
+        await server.processCGI(req, resp.meta)
         discard
           
       else:
-        await client.send $resp]#
+        await conn.writer.write $resp
              
   else:
     await conn.writer.write $response(RespProxyRefused, &"The protocol '{uri.scheme}' is unsuported.")
@@ -388,7 +377,7 @@ proc newServer(settings: Settings): Server =
       Server(settings: settings,
              key: TLSPrivateKey.init(settings.keyFile.readFile),
              cert: TLSCertificate.init(settings.certFile.readFile))
-
+    
     address = initTAddress("127.0.0.1:" & $settings.port)
   
   Server(createStreamServer(address,
