@@ -26,7 +26,10 @@
         packages = flake-utils.lib.flattenTree {
           chronos = pkgsWithNimble.nimPackages.chronos;
           openssl = pkgs.openssl;
-          
+
+          nim = pkgs.nim;
+          nimlsp = pkgs.nimlsp;
+
           geminim = pkgs.nimPackages.buildNimPackage {
             pname = "geminim";
             version = "0.1.5";
@@ -36,5 +39,9 @@
         };
         
         defaultPackage = packages.geminim;
+
+        devShell = pkgs.mkShell {
+          nativeBuildInputs = with packages; [ nim nimlsp ];
+        };
       });
 }
