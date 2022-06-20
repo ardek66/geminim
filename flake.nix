@@ -34,7 +34,8 @@
             pname = "geminim";
             version = "0.1.5";
             src = ./.;
-            nativeBuildInputs = with packages; [ chronos openssl ];
+            buildInputs = [ packages.openssl ];
+            propagatedBuildInputs = [ packages.chronos ];
           };
         };
         
